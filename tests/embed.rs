@@ -400,3 +400,32 @@ async fn a_worker_the_runtime_stops_ends_its_stream_with_an_error() {
     // would stay open and the client would wait; it ends with an error
     assert!(matches!(seen.last(), Some(Err(_))), "{seen:?}");
 }
+
+// Only v8 has a pool of isolates with a limited number of places
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn requests_past_the_places_of_a_thread_wait_for_one() {
+    let worker = "export default {
+        async fetch() {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+
+            return new Response('ok');
+        },
+    };";
+    let embed = std::sync::Arc::new(Embed::builder(worker).threads(1).build().unwrap());
+    let mut calls = tokio::task::JoinSet::new();
+
+    for _ in 0..40 {
+        let embed = embed.clone();
+
+        calls.spawn(async move { text(embed.fetch(get("/")).await.unwrap()).await });
+    }
+
+    let all = tokio::time::timeout(Duration::from_secs(20), async {
+        while let Some(answer) = calls.join_next().await {
+            assert_eq!(answer.unwrap(), "ok");
+        }
+    });
+
+    all.await.expect("a request never got a place");
+}

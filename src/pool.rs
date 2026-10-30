@@ -3,6 +3,7 @@ use crate::{EmbedError, engine};
 use openworkers_core::{HttpRequest, HttpResponse, OperationsHandle};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot};
 
@@ -12,7 +13,33 @@ type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 /// a JavaScript engine keeps its state on the thread that made it.
 pub(crate) struct WorkerPool {
     senders: Vec<mpsc::UnboundedSender<Job>>,
+    loads: Vec<Arc<AtomicUsize>>,
     next: AtomicUsize,
+}
+
+/// A job sent to a thread and not finished: counted until it ends or is dropped.
+struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    fn start(load: &Arc<AtomicUsize>) -> Self {
+        load.fetch_add(1, Ordering::Relaxed);
+
+        Self(Arc::clone(load))
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// The thread with the fewest jobs, looking from `start` so that ties spread.
+fn least_loaded(loads: &[usize], start: usize) -> usize {
+    (0..loads.len())
+        .map(|offset| (start + offset) % loads.len())
+        .min_by_key(|&index| loads[index])
+        .expect("a pool has a thread")
 }
 
 impl WorkerPool {
@@ -21,11 +48,12 @@ impl WorkerPool {
 
         Self {
             senders: (0..threads).map(spawn).collect(),
+            loads: (0..threads).map(|_| Arc::default()).collect(),
             next: AtomicUsize::new(0),
         }
     }
 
-    /// Run a bundle for one request on the next thread in turn.
+    /// Run a bundle for one request on the thread with the fewest requests.
     pub async fn execute(
         &self,
         bundle: &Bundle,
@@ -44,12 +72,20 @@ impl WorkerPool {
         Fut: Future<Output = T> + 'static,
         T: Send + 'static,
     {
-        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.senders.len();
+        let loads: Vec<usize> = self
+            .loads
+            .iter()
+            .map(|load| load.load(Ordering::Relaxed))
+            .collect();
+        let index = least_loaded(&loads, self.next.fetch_add(1, Ordering::Relaxed));
+        let in_flight = InFlight::start(&self.loads[index]);
         let (done, result) = oneshot::channel();
 
         let job: Job = Box::new(move || {
             Box::pin(async move {
                 let _ = done.send(job().await);
+
+                drop(in_flight);
             })
         });
 
@@ -82,4 +118,23 @@ fn spawn(index: usize) -> mpsc::UnboundedSender<Job> {
         .expect("worker thread");
 
     sender
+}
+
+#[cfg(test)]
+mod tests {
+    use super::least_loaded;
+
+    #[test]
+    fn the_least_loaded_thread_is_chosen() {
+        assert_eq!(least_loaded(&[3, 1, 2], 0), 1);
+        assert_eq!(least_loaded(&[3, 1, 2], 2), 1);
+    }
+
+    #[test]
+    fn ties_go_to_the_thread_after_the_start() {
+        assert_eq!(least_loaded(&[0, 0, 0], 0), 0);
+        assert_eq!(least_loaded(&[0, 0, 0], 1), 1);
+        assert_eq!(least_loaded(&[0, 0, 0], 5), 2);
+        assert_eq!(least_loaded(&[2, 0, 5, 0], 2), 3);
+    }
 }
