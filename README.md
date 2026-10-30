@@ -25,6 +25,20 @@ const message = await embed.invoke('greet', 'Ada');
 - `command` takes an async function. `command_sync` takes a function that does not wait.
 - `assets(dir)` serves the files of `dir` for GET and HEAD requests, before the worker runs. The worker also reads them as `env.ASSETS`. Files are read on each request.
 
+## Engines
+
+The JavaScript engine is a feature. Exactly one is active; V8 is the default.
+
+| Feature | Engine | Notes |
+| ------- | ------ | ----- |
+| `v8` | V8 | Isolates stay warm in a pool. Serves every binding `embed` uses. |
+| `nova` | Nova | A worker per request. Serves `Assets` and `Invoke`. |
+| `jsc` | JavaScriptCore | A worker per request, on the system framework of macOS. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
+
+```bash
+cargo test --no-default-features --features nova,axum
+```
+
 ## Web frameworks
 
 `Embed::fetch` takes an `HttpRequest` and returns an `HttpResponse` from `openworkers-core`. For a web framework, enable its feature:
@@ -45,7 +59,7 @@ The build directory holds `_worker.js` and `assets/`. Without it, the example se
 
 ## Build
 
-`openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile time. Set it in `.cargo/config.toml` of your program, as this repository does. An empty file means no snapshot: the runtime starts slower and still works.
+With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile time. Set it in `.cargo/config.toml` of your program, as this repository does. An empty file means no snapshot: the runtime starts slower and still works.
 
 ## Limits
 

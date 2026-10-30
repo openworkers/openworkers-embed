@@ -1,25 +1,15 @@
-use crate::EmbedError;
 use crate::bundle::Bundle;
-use openworkers_core::{
-    Event, HttpRequest, HttpResponse, OperationsHandle, ResponseBody, RuntimeLimits,
-};
-use openworkers_runtime_v8::{
-    PinnedExecuteRequest, PinnedPoolConfig, execute_pinned, init_pinned_pool,
-};
+use crate::{EmbedError, engine};
+use openworkers_core::{HttpRequest, HttpResponse, OperationsHandle};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot};
 
-// The isolate pool is thread-local and each Embed owns its threads, so these
-// names never meet another worker.
-const OWNER: &str = "embed";
-const WORKER: &str = "embed";
-
 type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 
-/// The threads that run workers. Each one has a single-threaded tokio runtime,
-/// because the isolate pool of `openworkers-runtime-v8` is thread-local.
+/// The threads that run workers. Each one has a single-threaded tokio runtime:
+/// a JavaScript engine keeps its state on the thread that made it.
 pub(crate) struct WorkerPool {
     senders: Vec<mpsc::UnboundedSender<Job>>,
     next: AtomicUsize,
@@ -27,16 +17,7 @@ pub(crate) struct WorkerPool {
 
 impl WorkerPool {
     pub fn start(threads: usize) -> Self {
-        // One owner runs trusted code: no per-owner cap
-        init_pinned_pool(PinnedPoolConfig {
-            max_per_thread: 4,
-            max_per_owner: None,
-            max_concurrent_per_isolate: 8,
-            max_cached_contexts: 4,
-            overcommit: true,
-            max_context_reuses: 1000,
-            limits: RuntimeLimits::default(),
-        });
+        engine::init();
 
         Self {
             senders: (0..threads).map(spawn).collect(),
@@ -53,7 +34,8 @@ impl WorkerPool {
     ) -> Result<HttpResponse, EmbedError> {
         let bundle = bundle.clone();
 
-        self.run(move || fetch(bundle, ops, request)).await?
+        self.run(move || engine::fetch(bundle, ops, request))
+            .await?
     }
 
     async fn run<F, Fut, T>(&self, job: F) -> Result<T, EmbedError>
@@ -79,48 +61,11 @@ impl WorkerPool {
     }
 }
 
-async fn fetch(
-    bundle: Bundle,
-    ops: OperationsHandle,
-    request: HttpRequest,
-) -> Result<HttpResponse, EmbedError> {
-    let (task, response) = Event::fetch(request);
-
-    execute_pinned(PinnedExecuteRequest {
-        owner_id: OWNER.to_string(),
-        worker_id: WORKER.to_string(),
-        version: 1,
-        script: bundle.script(),
-        ops,
-        task,
-        on_warm_hit: None,
-        env_updated_at: None,
-        abort: None,
-        on_report: None,
-    })
-    .await
-    .map_err(EmbedError::Worker)?;
-
-    let response = response.await.map_err(|_| EmbedError::NoResponse)?;
-    let body = response
-        .body
-        .collect()
-        .await
-        .map_err(EmbedError::Body)?
-        .unwrap_or_default();
-
-    Ok(HttpResponse {
-        status: response.status,
-        headers: response.headers,
-        body: ResponseBody::Bytes(body),
-    })
-}
-
 fn spawn(index: usize) -> mpsc::UnboundedSender<Job> {
     let (sender, mut jobs) = mpsc::unbounded_channel::<Job>();
 
     std::thread::Builder::new()
-        .name(format!("embed-v8-{index}"))
+        .name(format!("embed-js-{index}"))
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

@@ -9,6 +9,7 @@ mod assets;
 mod bundle;
 mod commands;
 mod embed;
+mod engine;
 mod error;
 mod host;
 mod pool;

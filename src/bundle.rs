@@ -5,6 +5,11 @@ use openworkers_transform::{CodeLanguage, parse_worker_code};
 /// Defines `embed.invoke` for the worker code.
 const SHIM: &str = include_str!("shim.js");
 
+/// jsc dispatches to `addEventListener('fetch')` only, so a default export needs
+/// wiring to it.
+#[cfg(feature = "jsc")]
+const DEFAULT_EXPORT_BRIDGE: &str = include_str!("jsc_bridge.js");
+
 /// A worker ready to run.
 #[derive(Clone)]
 pub(crate) struct Bundle {
@@ -17,6 +22,9 @@ impl Bundle {
     pub fn compile(code: &str, bindings: Vec<BindingInfo>) -> Result<Self, EmbedError> {
         let code = parse_worker_code(code.as_bytes(), CodeLanguage::JavaScript)
             .map_err(EmbedError::Code)?;
+
+        #[cfg(feature = "jsc")]
+        let code = format!("{code}\n{DEFAULT_EXPORT_BRIDGE}");
 
         Ok(Self {
             script: Script::with_bindings(format!("{SHIM}{code}"), None, bindings),

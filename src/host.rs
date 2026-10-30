@@ -1,5 +1,6 @@
 use crate::assets::Assets;
 use crate::commands::Commands;
+use crate::engine;
 use crate::response::text;
 use crate::url;
 use openworkers_core::{
@@ -20,6 +21,8 @@ pub(crate) struct Host {
 }
 
 impl Host {
+    /// The bindings the worker gets: the engine may not serve every type, and a
+    /// binding it cannot serve would only read as undefined in the guest.
     pub fn bindings(&self) -> Vec<BindingInfo> {
         let mut bindings = vec![BindingInfo::invoke(COMMAND_BINDING)];
 
@@ -27,6 +30,7 @@ impl Host {
             bindings.push(BindingInfo::new(ASSETS_BINDING, BindingType::Assets));
         }
 
+        bindings.retain(|binding| engine::supports(binding.binding_type));
         bindings
     }
 }

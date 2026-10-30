@@ -207,6 +207,8 @@ async fn files_outside_the_directory_are_not_served() {
     assert_eq!(text(response), "worker");
 }
 
+// jsc does not serve the Assets binding
+#[cfg(not(feature = "jsc"))]
 #[tokio::test]
 async fn the_worker_reads_assets_through_env() {
     let (_site, embed) = site();

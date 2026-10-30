@@ -2,8 +2,9 @@
 //! worker calls with `embed.invoke`.
 //!
 //! Run it with `cargo run --features axum --example server [build-dir]`, then
-//! `curl localhost:3000/?name=Max`. The build directory is the output of
-//! `@openworkers/adapter-sveltekit`: `_worker.js` and `assets/`.
+//! `curl localhost:3000/?name=Max`. Set `PORT` to listen elsewhere. The build
+//! directory is the output of `@openworkers/adapter-sveltekit`: `_worker.js` and
+//! `assets/`.
 
 use openworkers_embed::Embed;
 use serde::{Deserialize, Serialize};
@@ -63,11 +64,12 @@ async fn main() {
         .build()
         .expect("worker code");
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
         .unwrap();
 
-    println!("listening on http://127.0.0.1:3000");
+    println!("listening on http://127.0.0.1:{port}");
     axum::serve(listener, openworkers_embed::backend::axum::router(embed))
         .await
         .unwrap();

@@ -6,6 +6,13 @@ license = "MIT"
 description = "Run a SvelteKit worker inside a Rust backend, with Rust functions the worker calls"
 
 [features]
+default = ["v8"]
+
+# The JavaScript engine, exactly one: build with --no-default-features to pick another
+v8 = ["dep:openworkers-runtime-v8"]
+nova = ["dep:openworkers-runtime-nova"]
+jsc = ["dep:openworkers-runtime-jsc"]
+
 # The web frameworks openworkers-core converts requests and responses for
 actix = ["dep:actix-web", "openworkers-core/actix"]
 hyper = ["dep:hyper", "dep:http-body-util", "openworkers-core/hyper"]
@@ -13,8 +20,11 @@ axum = ["dep:axum", "hyper"]
 
 [dependencies]
 openworkers-core = { git = "https://github.com/openworkers/openworkers-core", tag = "v0.18.1", features = ["invoke"] }
-openworkers-runtime-v8 = { git = "https://github.com/openworkers/openworkers-runtime-v8", tag = "v0.18.5", features = ["invoke"] }
 openworkers-transform = { git = "https://github.com/openworkers/openworkers-transform", tag = "v0.1.4" }
+
+openworkers-runtime-v8 = { git = "https://github.com/openworkers/openworkers-runtime-v8", tag = "v0.18.5", features = ["invoke"], optional = true }
+openworkers-runtime-nova = { git = "https://github.com/openworkers/openworkers-runtime-nova", tag = "v0.18.2", features = ["invoke"], optional = true }
+openworkers-runtime-jsc = { git = "https://github.com/openworkers/openworkers-runtime-jsc", tag = "v0.18.1", features = ["invoke"], optional = true }
 
 actix-web = { version = "4", optional = true }
 axum = { version = "0.8", optional = true }
