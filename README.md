@@ -36,6 +36,7 @@ export const load = async ({ platform }) => ({
 - Arguments and results are JSON. A command that returns `Err` throws an `Error` in the worker.
 - `command` takes an async function. `command_sync` takes a function that does not wait.
 - `assets(dir)` serves the files of `dir` for GET and HEAD requests, before the worker runs. The worker also reads them as `env.ASSETS`. Files are read on each request.
+- The `fetch` of the worker goes out over HTTP, with the client settings of the runner: a redirect is the answer and not a hop, a pause of 10 seconds from the server ends the call, and the body streams back. There is no egress filter, because the code is trusted. The `fetch` feature, on by default, brings `reqwest`.
 
 ## Engines
 
@@ -44,7 +45,7 @@ The JavaScript engine is a feature. Exactly one is active; V8 is the default.
 | Feature | Engine         | Notes                                                                                                                                                                               |
 | ------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v8`    | V8             | Isolates stay warm in a pool. Serves every binding `embed` uses.                                                                                                                    |
-| `nova`  | Nova           | A worker per request. Serves `Assets` and `Invoke`.                                                                                                                                 |
+| `nova`  | Nova           | A worker per request. Serves `Assets` and `Invoke`. It has no global `fetch`.                                                                                                       |
 | `jsc`   | JavaScriptCore | A worker per request, on the system framework of macOS. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
 
 ```bash

@@ -37,6 +37,12 @@ impl Host {
 }
 
 impl OperationsHandler for Host {
+    /// The `fetch` of the worker: HTTP out, with the body streamed back.
+    #[cfg(feature = "fetch")]
+    fn handle_fetch(&self, request: HttpRequest) -> OpFuture<'_, Result<HttpResponse, String>> {
+        Box::pin(crate::fetch::fetch(request))
+    }
+
     /// The adapter's worker calls `env.ASSETS.fetch` for prerendered pages and
     /// for files it expects to find.
     fn handle_binding_fetch(

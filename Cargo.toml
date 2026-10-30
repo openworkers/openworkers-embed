@@ -6,12 +6,15 @@ license = "MIT"
 description = "Run a SvelteKit worker inside a Rust backend, with Rust functions the worker calls"
 
 [features]
-default = ["v8"]
+default = ["v8", "fetch"]
 
 # The JavaScript engine, exactly one: build with --no-default-features to pick another
 v8 = ["dep:openworkers-runtime-v8"]
 nova = ["dep:openworkers-runtime-nova"]
 jsc = ["dep:openworkers-runtime-jsc"]
+
+# The `fetch` of the worker, answered over HTTP as the runner answers it
+fetch = ["dep:reqwest", "dep:futures-util"]
 
 # The web frameworks openworkers-core converts requests and responses for
 actix = ["dep:actix-web", "openworkers-core/actix"]
@@ -29,8 +32,10 @@ openworkers-runtime-jsc = { git = "https://github.com/openworkers/openworkers-ru
 actix-web = { version = "4", optional = true }
 axum = { version = "0.8", optional = true }
 bytes = "1"
+futures-util = { version = "0.3", default-features = false, optional = true }
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"], optional = true }
 serde = "1"
 serde_json = "1"
 thiserror = "2"

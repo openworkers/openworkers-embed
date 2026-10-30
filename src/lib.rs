@@ -12,6 +12,8 @@ mod commands;
 mod embed;
 mod engine;
 mod error;
+#[cfg(feature = "fetch")]
+mod fetch;
 mod host;
 mod pool;
 mod response;
