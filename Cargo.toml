@@ -37,10 +37,15 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync", "fs"] }
 
 [dev-dependencies]
+criterion = { version = "0.8", features = ["async_tokio"] }
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
+
+[[bench]]
+name = "fetch"
+harness = false
 
 [[example]]
 name = "server"
