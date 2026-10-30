@@ -26,12 +26,12 @@ const _: () = assert!(
 #[cfg(any(feature = "nova", feature = "jsc"))]
 mod per_request;
 #[cfg(feature = "v8")]
-mod pinned;
+mod warm;
 
 #[cfg(any(feature = "nova", feature = "jsc"))]
 pub(crate) use per_request::{fetch, init};
 #[cfg(feature = "v8")]
-pub(crate) use pinned::{fetch, init};
+pub(crate) use warm::{fetch, init};
 
 /// Binding types the engine serves: v8 builds an `env` object per binding,
 /// while nova and jsc list what they serve themselves.

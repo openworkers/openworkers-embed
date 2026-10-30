@@ -77,7 +77,9 @@ impl WorkerPool {
             .iter()
             .map(|load| load.load(Ordering::Relaxed))
             .collect();
-        let index = least_loaded(&loads, self.next.fetch_add(1, Ordering::Relaxed));
+        let rotating = self.next.fetch_add(1, Ordering::Relaxed);
+        let idle = loads.iter().all(|&load| load == 0);
+        let index = least_loaded(&loads, if idle { 0 } else { rotating });
         let in_flight = InFlight::start(&self.loads[index]);
         let (done, result) = oneshot::channel();
 
