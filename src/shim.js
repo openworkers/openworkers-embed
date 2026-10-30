@@ -1,14 +1,7 @@
-globalThis.embed = {
-    async invoke(name, args) {
-        const response = await env.__embed.fetch(`http://embed/${name}`, {
-            method: 'POST',
-            body: JSON.stringify(args ?? null),
-        });
+(function () {
+    const host = env.__embed;
 
-        if (!response.ok) {
-            throw new Error(await response.text());
-        }
-
-        return response.json();
-    },
-};
+    globalThis.embed = {
+        invoke: (name, args) => host.invoke(name, args),
+    };
+})();

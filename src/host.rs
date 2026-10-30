@@ -1,9 +1,9 @@
 use crate::assets::Assets;
 use crate::commands::Commands;
-use crate::response::{reply, text};
+use crate::response::text;
 use crate::url;
 use openworkers_core::{
-    BindingInfo, BindingType, HttpRequest, HttpResponse, OpFuture, OperationsHandler,
+    BindingInfo, BindingType, HttpRequest, HttpResponse, InvokeResult, OpFuture, OperationsHandler,
 };
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ pub(crate) struct Host {
 
 impl Host {
     pub fn bindings(&self) -> Vec<BindingInfo> {
-        let mut bindings = vec![BindingInfo::new(COMMAND_BINDING, BindingType::Worker)];
+        let mut bindings = vec![BindingInfo::invoke(COMMAND_BINDING)];
 
         if self.assets.is_some() {
             bindings.push(BindingInfo::new(ASSETS_BINDING, BindingType::Assets));
@@ -54,37 +54,27 @@ impl OperationsHandler for Host {
         })
     }
 
-    /// `embed.invoke(name, args)`: the name is the path, the arguments are the
-    /// JSON body.
-    fn handle_binding_worker(
+    /// `embed.invoke(name, args)`: runs the command and answers its result.
+    fn handle_binding_invoke(
         &self,
         binding: &str,
-        request: HttpRequest,
-    ) -> OpFuture<'_, Result<HttpResponse, String>> {
-        let is_command = binding == COMMAND_BINDING;
-        let name = url::path(&request.url).trim_start_matches('/').to_string();
+        name: &str,
+        args: serde_json::Value,
+    ) -> OpFuture<'_, InvokeResult> {
+        let call = (binding == COMMAND_BINDING)
+            .then(|| self.commands.call(name, args))
+            .flatten();
+        let unknown = format!("no command named '{name}'");
 
         Box::pin(async move {
-            let unknown = || text(404, &format!("no command named '{name}'"));
+            let Some(call) = call else {
+                return InvokeResult::Error(unknown);
+            };
 
-            if !is_command {
-                return Ok(unknown());
+            match call.await {
+                Ok(value) => InvokeResult::Value(value),
+                Err(message) => InvokeResult::Error(message),
             }
-
-            let body = request.body.collect().await?.unwrap_or_default();
-
-            let Ok(args) = serde_json::from_slice(&body) else {
-                return Ok(text(400, "the arguments are not JSON"));
-            };
-
-            let Some(call) = self.commands.call(&name, args) else {
-                return Ok(unknown());
-            };
-
-            Ok(match call.await {
-                Ok(value) => reply(200, "application/json", value.to_string()),
-                Err(message) => text(500, &message),
-            })
         })
     }
 }
