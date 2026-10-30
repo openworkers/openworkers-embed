@@ -1,0 +1,37 @@
+[package]
+name = "openworkers-embed"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+description = "Run a SvelteKit worker inside a Rust backend, with Rust functions the worker calls"
+
+[features]
+# The web frameworks openworkers-core converts requests and responses for
+actix = ["dep:actix-web", "openworkers-core/actix"]
+hyper = ["dep:hyper", "dep:http-body-util", "openworkers-core/hyper"]
+axum = ["dep:axum", "hyper"]
+
+[dependencies]
+openworkers-core = { git = "https://github.com/openworkers/openworkers-core", tag = "v0.18.0" }
+openworkers-runtime-v8 = { git = "https://github.com/openworkers/openworkers-runtime-v8", tag = "v0.18.4" }
+openworkers-transform = { git = "https://github.com/openworkers/openworkers-transform", tag = "v0.1.4" }
+
+actix-web = { version = "4", optional = true }
+axum = { version = "0.8", optional = true }
+bytes = "1"
+http-body-util = { version = "0.1", optional = true }
+hyper = { version = "1", optional = true }
+serde = "1"
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync", "fs"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+
+[[example]]
+name = "server"
+required-features = ["axum"]
