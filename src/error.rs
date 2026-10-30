@@ -6,8 +6,6 @@ pub enum EmbedError {
     Worker(TerminationReason),
     #[error("the worker sent no response")]
     NoResponse,
-    #[error("the response body failed: {0}")]
-    Body(String),
     #[error("the worker thread stopped")]
     ThreadGone,
     #[error("the worker code does not parse: {0}")]

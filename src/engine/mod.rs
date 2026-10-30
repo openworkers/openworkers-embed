@@ -3,7 +3,8 @@
 //! run one request on a worker thread, and which binding types it serves.
 
 use crate::EmbedError;
-use openworkers_core::{BindingType, HttpResponse, ResponseBody};
+use openworkers_core::{BindingType, HttpResponse, TerminationReason};
+use std::future::Future;
 use tokio::sync::oneshot;
 
 #[cfg(not(any(feature = "v8", feature = "nova", feature = "jsc")))]
@@ -52,19 +53,38 @@ pub(crate) fn supports(binding_type: BindingType) -> bool {
     SUPPORTED.contains(&binding_type)
 }
 
-/// The response of an event, with its body read to the end.
-async fn buffered(response: oneshot::Receiver<HttpResponse>) -> Result<HttpResponse, EmbedError> {
-    let response = response.await.map_err(|_| EmbedError::NoResponse)?;
-    let body = response
-        .body
-        .collect()
-        .await
-        .map_err(EmbedError::Body)?
-        .unwrap_or_default();
+/// The response of an event, as soon as the worker has one. `execution` drives the
+/// event; once the response is there it moves to a task of its own, so a body that
+/// streams keeps being fed while the caller reads it.
+async fn respond<F>(
+    execution: F,
+    response: oneshot::Receiver<HttpResponse>,
+) -> Result<HttpResponse, EmbedError>
+where
+    F: Future<Output = Result<(), TerminationReason>> + 'static,
+{
+    let mut execution = Box::pin(execution);
+    let mut response = response;
 
-    Ok(HttpResponse {
-        status: response.status,
-        headers: response.headers,
-        body: ResponseBody::Bytes(body),
-    })
+    tokio::select! {
+        result = &mut execution => {
+            result.map_err(EmbedError::Worker)?;
+            response.await.map_err(|_| EmbedError::NoResponse)
+        }
+        answer = &mut response => match answer {
+            Ok(response) => {
+                tokio::task::spawn_local(async move {
+                    let _ = execution.await;
+                });
+
+                Ok(response)
+            }
+            // No response: the execution says why
+            Err(_) => {
+                execution.await.map_err(EmbedError::Worker)?;
+
+                Err(EmbedError::NoResponse)
+            }
+        },
+    }
 }

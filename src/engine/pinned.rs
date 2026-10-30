@@ -1,7 +1,7 @@
 //! v8: isolates stay warm in a thread-local pool, which is why each worker
 //! thread runs a single-threaded tokio runtime.
 
-use super::buffered;
+use super::respond;
 use crate::EmbedError;
 use crate::bundle::Bundle;
 use openworkers_core::{Event, HttpRequest, HttpResponse, OperationsHandle, RuntimeLimits};
@@ -24,7 +24,11 @@ pub(crate) fn init() {
         max_cached_contexts: 4,
         overcommit: true,
         max_context_reuses: 1000,
-        limits: RuntimeLimits::default(),
+        // A stream may live as long as its client reads it, and the code is trusted
+        limits: RuntimeLimits {
+            max_wall_clock_time_ms: 0,
+            ..RuntimeLimits::default()
+        },
     });
 }
 
@@ -35,7 +39,7 @@ pub(crate) async fn fetch(
 ) -> Result<HttpResponse, EmbedError> {
     let (task, response) = Event::fetch(request);
 
-    execute_pinned(PinnedExecuteRequest {
+    let execution = execute_pinned(PinnedExecuteRequest {
         owner_id: OWNER.to_string(),
         worker_id: WORKER.to_string(),
         version: 1,
@@ -46,9 +50,7 @@ pub(crate) async fn fetch(
         env_updated_at: None,
         abort: None,
         on_report: None,
-    })
-    .await
-    .map_err(EmbedError::Worker)?;
+    });
 
-    buffered(response).await
+    respond(execution, response).await
 }

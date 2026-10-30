@@ -1,7 +1,7 @@
 //! nova and jsc: a worker per request, as the runner does for every engine
 //! without a pool of its own.
 
-use super::buffered;
+use super::respond;
 use crate::EmbedError;
 use crate::bundle::Bundle;
 use openworkers_core::{Event, HttpRequest, HttpResponse, OperationsHandle};
@@ -23,7 +23,5 @@ pub(crate) async fn fetch(
         .map_err(EmbedError::Worker)?;
     let (task, response) = Event::fetch(request);
 
-    worker.exec(task).await.map_err(EmbedError::Worker)?;
-
-    buffered(response).await
+    respond(async move { worker.exec(task).await }, response).await
 }

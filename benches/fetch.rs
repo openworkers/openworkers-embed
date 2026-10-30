@@ -85,7 +85,7 @@ fn bench_latency(c: &mut Criterion) {
 
         group.bench_function(name, |b| {
             b.to_async(&runtime)
-                .iter(|| async { embed.fetch(request("/")).await.unwrap() })
+                .iter(|| async { get(&embed, "/").await })
         });
     }
 
@@ -93,7 +93,7 @@ fn bench_latency(c: &mut Criterion) {
         Some(embed) => {
             group.bench_function("ssr", |b| {
                 b.to_async(&runtime)
-                    .iter(|| async { embed.fetch(request("/?name=Max")).await.unwrap() })
+                    .iter(|| async { get(&embed, "/?name=Max").await })
             });
         }
         None => eprintln!("skipping ssr: no build in examples/sveltekit-app/build"),
@@ -127,6 +127,14 @@ fn bench_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+/// One request, its body read to the end: a worker answers with a stream, and a
+/// server reads it before it is done with the request.
+async fn get(embed: &Embed, path: &str) {
+    let response = embed.fetch(request(path)).await.unwrap();
+
+    response.body.collect().await.unwrap();
+}
+
 /// `CONCURRENT` requests in flight at once, all awaited.
 async fn burst(embed: Arc<Embed>, path: &'static str) {
     let mut set = JoinSet::new();
@@ -134,7 +142,7 @@ async fn burst(embed: Arc<Embed>, path: &'static str) {
     for _ in 0..CONCURRENT {
         let embed = embed.clone();
 
-        set.spawn(async move { embed.fetch(request(path)).await.unwrap() });
+        set.spawn(async move { get(&embed, path).await });
     }
 
     while let Some(response) = set.join_next().await {

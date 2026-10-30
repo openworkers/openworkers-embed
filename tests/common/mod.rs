@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bytes::Bytes;
-use openworkers_embed::{HttpMethod, HttpRequest, HttpResponse, RequestBody, ResponseBody};
+use openworkers_embed::{HttpMethod, HttpRequest, HttpResponse, RequestBody};
 use std::collections::HashMap;
 
 /// Answers with what it received, so a test sees how a request arrived.
@@ -28,16 +28,18 @@ pub fn get(path: &str) -> HttpRequest {
     }
 }
 
-pub fn body(response: HttpResponse) -> Bytes {
-    match response.body {
-        ResponseBody::Bytes(bytes) => bytes,
-        ResponseBody::None => Bytes::new(),
-        ResponseBody::Stream(_) => panic!("the body streams"),
-    }
+/// The body, read to the end: a worker answers with a stream.
+pub async fn body(response: HttpResponse) -> Bytes {
+    response
+        .body
+        .collect()
+        .await
+        .expect("the body does not fail")
+        .unwrap_or_default()
 }
 
-pub fn text(response: HttpResponse) -> String {
-    String::from_utf8(body(response).to_vec()).expect("a UTF-8 body")
+pub async fn text(response: HttpResponse) -> String {
+    String::from_utf8(body(response).await.to_vec()).expect("a UTF-8 body")
 }
 
 pub fn header<'a>(response: &'a HttpResponse, name: &str) -> Option<&'a str> {

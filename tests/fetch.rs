@@ -120,7 +120,7 @@ async fn run(code: &str) -> String {
         .expect("the worker did not answer in 5 seconds")
         .unwrap();
 
-    text(response)
+    text(response).await
 }
 
 #[tokio::test(flavor = "multi_thread")]

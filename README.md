@@ -37,6 +37,7 @@ export const load = async ({ platform }) => ({
 - `command` takes an async function. `command_sync` takes a function that does not wait.
 - `assets(dir)` serves the files of `dir` for GET and HEAD requests, before the worker runs. The worker also reads them as `env.ASSETS`. Files are read on each request.
 - The `fetch` of the worker goes out over HTTP, with the client settings of the runner: a redirect is the answer and not a hop, a pause of 10 seconds from the server ends the call, and the body streams back. There is no egress filter, because the code is trusted. The `fetch` feature, on by default, brings `reqwest`.
+- A response of the worker streams out: `Embed::fetch` returns as soon as the worker has one, and the body follows while the worker keeps running. A client that drops the body ends the stream. nova drains a stream before it answers, so an endless stream never ends there.
 
 ## Engines
 
@@ -76,6 +77,6 @@ With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile tim
 
 ## Limits
 
-- Responses are read to the end before they leave: no streaming.
-- The worker code is trusted. There are no per-request CPU or memory limits beyond the runtime defaults.
+- A file of `assets(dir)` is read to the end before it is sent.
+- The worker code is trusted. On v8 there is no wall-clock limit, so a stream may live as long as its client reads it. The CPU and memory limits are the defaults of the runtime.
 - One worker per `Embed`. Replacing the code means building a new `Embed`.
