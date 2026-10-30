@@ -18,7 +18,7 @@ let embed = Embed::builder(std::fs::read_to_string("build/_worker.js")?)
 The worker calls the command:
 
 ```js
-const message = await embed.invoke('greet', 'Ada');
+const message = await embed.invoke("greet", "Ada");
 ```
 
 - Arguments and results are JSON. A command that returns `Err` throws an `Error` in the worker.
@@ -29,11 +29,11 @@ const message = await embed.invoke('greet', 'Ada');
 
 The JavaScript engine is a feature. Exactly one is active; V8 is the default.
 
-| Feature | Engine | Notes |
-| ------- | ------ | ----- |
-| `v8` | V8 | Isolates stay warm in a pool. Serves every binding `embed` uses. |
-| `nova` | Nova | A worker per request. Serves `Assets` and `Invoke`. |
-| `jsc` | JavaScriptCore | A worker per request, on the system framework of macOS. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
+| Feature | Engine         | Notes                                                                                                                                                                               |
+| ------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `v8`    | V8             | Isolates stay warm in a pool. Serves every binding `embed` uses.                                                                                                                    |
+| `nova`  | Nova           | A worker per request. Serves `Assets` and `Invoke`.                                                                                                                                 |
+| `jsc`   | JavaScriptCore | A worker per request, on the system framework of macOS. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
 
 ```bash
 cargo test --no-default-features --features nova,axum
@@ -43,11 +43,11 @@ cargo test --no-default-features --features nova,axum
 
 `Embed::fetch` takes an `HttpRequest` and returns an `HttpResponse` from `openworkers-core`. For a web framework, enable its feature:
 
-| Feature | Entry point                                                       |
-| ------- | ----------------------------------------------------------------- |
+| Feature | Entry point                                                        |
+| ------- | ------------------------------------------------------------------ |
 | `actix` | `backend::actix::handle`, used with `web::to` as a default service |
-| `hyper` | `backend::hyper::handle(&embed, request)`                         |
-| `axum`  | `backend::axum::router(embed)`                                    |
+| `hyper` | `backend::hyper::handle(&embed, request)`                          |
+| `axum`  | `backend::axum::router(embed)`                                     |
 
 ## Example
 
