@@ -1,6 +1,6 @@
 # openworkers-embed
 
-Run a worker inside a Rust program. The worker is an ES module with `export default { fetch }`, for example the output of `@openworkers/adapter-sveltekit`. It runs in V8, in the same process as your Rust code.
+Run a worker inside a Rust program. The worker is an ES module with `export default { fetch }`, for example the output of `@openworkers/adapter-sveltekit`. It runs in the same process as your Rust code, on V8 by default.
 
 The worker calls Rust functions that you register by name, and your Rust code owns storage, databases and any other resource. There are no Cloudflare-style bindings to configure.
 
@@ -15,10 +15,22 @@ let embed = Embed::builder(std::fs::read_to_string("build/_worker.js")?)
     .build()?;
 ```
 
-The worker calls the command:
+The worker calls the command through its `EMBED` binding:
 
 ```js
-const message = await embed.invoke("greet", "Ada");
+export default {
+  async fetch(request, env) {
+    return new Response(await env.EMBED.invoke("greet", "Ada"));
+  },
+};
+```
+
+In SvelteKit, `@openworkers/adapter-sveltekit` 0.6.2 or later adds `platform.invoke`, which calls `env.EMBED.invoke`:
+
+```js
+export const load = async ({ platform }) => ({
+  user: await platform.invoke("get_user", { id: 42 }),
+});
 ```
 
 - Arguments and results are JSON. A command that returns `Err` throws an `Error` in the worker.

@@ -8,8 +8,9 @@ use openworkers_core::{
 };
 use std::sync::Arc;
 
-/// The binding that carries every command; the shim wraps it in `embed.invoke`.
-const COMMAND_BINDING: &str = "__embed";
+/// The binding a worker calls the host through: `env.EMBED.invoke(name, args)`.
+/// The SvelteKit adapter reads the same name for `platform.invoke`.
+const COMMAND_BINDING: &str = "EMBED";
 
 /// The name the adapter's worker reads static files from.
 const ASSETS_BINDING: &str = "ASSETS";
@@ -58,7 +59,7 @@ impl OperationsHandler for Host {
         })
     }
 
-    /// `embed.invoke(name, args)`: runs the command and answers its result.
+    /// `env.EMBED.invoke(name, args)`: runs the command and answers its result.
     fn handle_binding_invoke(
         &self,
         binding: &str,

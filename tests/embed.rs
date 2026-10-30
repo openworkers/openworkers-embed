@@ -6,10 +6,10 @@ use std::fs;
 
 const CALLS_A_COMMAND: &str = r#"
 export default {
-    async fetch(request) {
+    async fetch(request, env) {
         const name = new URL(request.url).searchParams.get('name');
-        const sum = await embed.invoke('add', { a: 1, b: 2 });
-        const greeting = await embed.invoke('greet', name);
+        const sum = await env.EMBED.invoke('add', { a: 1, b: 2 });
+        const greeting = await env.EMBED.invoke('greet', name);
 
         return new Response(`${sum} ${greeting}`);
     },
@@ -46,7 +46,7 @@ async fn a_worker_calls_rust_commands() {
 
 async fn exception_message(code: &str) -> String {
     let worker = format!(
-        "export default {{ async fetch() {{ try {{ {code} }} catch (error) {{ return new Response(error.message); }} }} }};"
+        "export default {{ async fetch(request, env) {{ try {{ {code} }} catch (error) {{ return new Response(error.message); }} }} }};"
     );
     let embed = adder(&worker).build().unwrap();
 
@@ -55,7 +55,7 @@ async fn exception_message(code: &str) -> String {
 
 #[tokio::test]
 async fn a_failing_command_throws_in_the_worker() {
-    let worker = r#"export default { async fetch() { try { await embed.invoke('fail'); } catch (error) { return new Response(error.message); } } };"#;
+    let worker = r#"export default { async fetch(request, env) { try { await env.EMBED.invoke('fail'); } catch (error) { return new Response(error.message); } } };"#;
     let embed = Embed::builder(worker)
         .threads(1)
         .command_sync("fail", |_: ()| Err::<(), _>("the disk is full"))
@@ -70,14 +70,14 @@ async fn a_failing_command_throws_in_the_worker() {
 
 #[tokio::test]
 async fn an_unknown_command_throws_in_the_worker() {
-    let message = exception_message("await embed.invoke('nope');").await;
+    let message = exception_message("await env.EMBED.invoke('nope');").await;
 
     assert_eq!(message, "no command named 'nope'");
 }
 
 #[tokio::test]
 async fn bad_arguments_throw_in_the_worker() {
-    let message = exception_message("await embed.invoke('add', 'text');").await;
+    let message = exception_message("await env.EMBED.invoke('add', 'text');").await;
 
     assert!(message.starts_with("bad arguments"), "{message}");
 }
@@ -216,5 +216,16 @@ async fn the_worker_reads_assets_through_env() {
     assert_eq!(
         text(embed.fetch(get("/through-env")).await.unwrap()),
         "plain"
+    );
+}
+
+#[tokio::test]
+async fn the_host_is_on_env_and_not_a_global() {
+    let worker = "export default { fetch: (request, env) => new Response(`${typeof embed} ${typeof env.EMBED.invoke}`) };";
+    let embed = adder(worker).build().unwrap();
+
+    assert_eq!(
+        text(embed.fetch(get("/")).await.unwrap()),
+        "undefined function"
     );
 }

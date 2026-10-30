@@ -23,8 +23,8 @@ const CONCURRENT: usize = 64;
 const HELLO: &str = "export default { fetch: () => new Response('hello') };";
 
 const INVOKE: &str = "export default {
-    async fetch() {
-        const sum = await embed.invoke('add', { a: 1, b: 2 });
+    async fetch(request, env) {
+        const sum = await env.EMBED.invoke('add', { a: 1, b: 2 });
 
         return new Response(String(sum));
     },

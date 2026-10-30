@@ -1,8 +1,9 @@
+import type { Platform as OpenWorkersPlatform } from '@openworkers/adapter-sveltekit';
+
 declare global {
-  // Installed by openworkers-embed: calls the Rust command registered under `name`.
-  const embed: {
-    invoke<T = unknown>(name: string, args?: unknown): Promise<T>;
-  };
+  namespace App {
+    interface Platform extends OpenWorkersPlatform {}
+  }
 }
 
 export {};

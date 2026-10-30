@@ -2,8 +2,9 @@
 //!
 //! The worker calls Rust functions the host registers with
 //! [`EmbedBuilder::command`], the way a Tauri frontend calls its commands:
-//! `await embed.invoke("name", args)`. Requests come in through
-//! [`Embed::fetch`], or through a [`backend`] for actix, hyper or axum.
+//! `await env.EMBED.invoke("name", args)`, or `platform.invoke` in SvelteKit.
+//! Requests come in through [`Embed::fetch`], or through a [`backend`] for actix,
+//! hyper or axum.
 
 mod assets;
 mod bundle;

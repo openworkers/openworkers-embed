@@ -1,5 +1,5 @@
 //! A complete server: Axum in front, a worker behind, and two Rust commands the
-//! worker calls with `embed.invoke`.
+//! worker calls with `env.EMBED.invoke`.
 //!
 //! Run it with `cargo run --features axum --example server [build-dir]`, then
 //! `curl localhost:3000/?name=Max`. Set `PORT` to listen elsewhere. The build
@@ -14,10 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const WORKER: &str = r#"
 export default {
-    async fetch(request) {
+    async fetch(request, env) {
         const name = new URL(request.url).searchParams.get('name') ?? 'world';
-        const user = await embed.invoke('greet', { name });
-        const hits = await embed.invoke('hit');
+        const user = await env.EMBED.invoke('greet', { name });
+        const hits = await env.EMBED.invoke('hit');
 
         return new Response(`${user.message}, hit ${hits}\n`);
     },

@@ -28,7 +28,7 @@ impl EmbedBuilder {
         self
     }
 
-    /// Register a Rust function the worker calls with `embed.invoke(name, args)`.
+    /// Register a Rust function the worker calls with `env.EMBED.invoke(name, args)`.
     /// The arguments arrive deserialized and the result goes back as JSON.
     pub fn command<A, R, E, F, Fut>(mut self, name: &str, function: F) -> Self
     where
