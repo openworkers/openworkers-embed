@@ -3,9 +3,11 @@
 //! run one request on a worker thread, and which binding types it serves.
 
 use crate::EmbedError;
-use openworkers_core::{BindingType, HttpResponse, TerminationReason};
+use bytes::Bytes;
+use openworkers_core::{BindingType, HttpResponse, ResponseBody, TerminationReason};
 use std::future::Future;
-use tokio::sync::oneshot;
+use std::pin::Pin;
+use tokio::sync::{mpsc, oneshot};
 
 #[cfg(not(any(feature = "v8", feature = "nova", feature = "jsc")))]
 compile_error!("no JavaScript engine selected: build with --features v8|nova|jsc");
@@ -72,10 +74,8 @@ where
             response.await.map_err(|_| EmbedError::NoResponse)
         }
         answer = &mut response => match answer {
-            Ok(response) => {
-                tokio::task::spawn_local(async move {
-                    let _ = execution.await;
-                });
+            Ok(mut response) => {
+                response.body = follow(execution, response.body);
 
                 Ok(response)
             }
@@ -86,5 +86,78 @@ where
                 Err(EmbedError::NoResponse)
             }
         },
+    }
+}
+
+type Chunks = mpsc::Receiver<Result<Bytes, String>>;
+
+/// Keeps the worker running while the caller reads its body. A body that streams
+/// is relayed, so that it ends with an error when the runtime stops the worker:
+/// left alone, it would stay open for ever, and the client would wait.
+fn follow<F>(execution: Pin<Box<F>>, body: ResponseBody) -> ResponseBody
+where
+    F: Future<Output = Result<(), TerminationReason>> + 'static,
+{
+    match body {
+        ResponseBody::Stream(chunks) => {
+            let (relay, body) = mpsc::channel(16);
+
+            tokio::task::spawn_local(relay_chunks(execution, chunks, relay));
+
+            ResponseBody::Stream(body)
+        }
+        body => {
+            tokio::task::spawn_local(async move {
+                let _ = execution.await;
+            });
+
+            body
+        }
+    }
+}
+
+async fn relay_chunks<F>(
+    mut execution: Pin<Box<F>>,
+    mut chunks: Chunks,
+    relay: mpsc::Sender<Result<Bytes, String>>,
+) where
+    F: Future<Output = Result<(), TerminationReason>>,
+{
+    let mut ended = false;
+
+    loop {
+        tokio::select! {
+            result = &mut execution, if !ended => {
+                ended = true;
+
+                if let Err(reason) = result {
+                    let _ = relay.send(Err(format!("the worker was stopped: {reason:?}"))).await;
+
+                    return;
+                }
+            }
+            chunk = chunks.recv() => match chunk {
+                Some(chunk) => {
+                    if relay.send(chunk).await.is_err() {
+                        // The client is gone. The worker finishes, as in the runner:
+                        // it may still have work to do after its body
+                        drop(chunks);
+
+                        if !ended {
+                            let _ = execution.await;
+                        }
+
+                        return;
+                    }
+                }
+                None => {
+                    if !ended {
+                        let _ = execution.await;
+                    }
+
+                    return;
+                }
+            },
+        }
     }
 }

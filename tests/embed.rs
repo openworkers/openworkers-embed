@@ -354,3 +354,49 @@ async fn a_dropped_response_does_not_block_the_next_request() {
 
     assert_eq!(text(hello).await, "hello");
 }
+
+// Only v8 enforces a CPU limit
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_the_runtime_stops_ends_its_stream_with_an_error() {
+    let worker = "export default {
+        fetch() {
+            let step = 0;
+
+            return new Response(new ReadableStream({
+                async pull(controller) {
+                    if (step++ === 0) {
+                        controller.enqueue(new TextEncoder().encode('first '));
+
+                        return;
+                    }
+
+                    // The wait is not CPU time: the response is out when the burn starts
+                    await new Promise((resolve) => setTimeout(resolve, 200));
+
+                    const until = Date.now() + 500;
+
+                    while (Date.now() < until);
+                },
+            }));
+        },
+    };";
+    let embed = Embed::builder(worker).threads(1).build().unwrap();
+    let response = embed.fetch(get("/")).await.unwrap();
+    let openworkers_embed::ResponseBody::Stream(mut chunks) = response.body else {
+        panic!("the body is a stream");
+    };
+
+    let mut seen = Vec::new();
+
+    while let Some(item) = tokio::time::timeout(Duration::from_secs(10), chunks.recv())
+        .await
+        .expect("the stream stayed open")
+    {
+        seen.push(item);
+    }
+
+    // The worker spends more CPU than its limit allows. Left alone, the stream
+    // would stay open and the client would wait; it ends with an error
+    assert!(matches!(seen.last(), Some(Err(_))), "{seen:?}");
+}
