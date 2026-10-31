@@ -58,7 +58,15 @@ impl Assets {
                 return None;
             }
 
-            if let Ok(body) = tokio::fs::read(self.root.join(&candidate)).await {
+            let file = self.root.join(&candidate);
+
+            // Most requests name no file. tokio::fs would send each miss to a
+            // blocking thread and back, so a stat on this thread answers it.
+            if !std::fs::metadata(&file).is_ok_and(|metadata| metadata.is_file()) {
+                continue;
+            }
+
+            if let Ok(body) = tokio::fs::read(file).await {
                 return Some(Asset {
                     content_type: content_type(&candidate),
                     cache_control: immutable(&candidate),
