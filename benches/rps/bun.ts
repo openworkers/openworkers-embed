@@ -49,6 +49,8 @@ const worker = (await import(join(build, '_worker.js'))).default;
 Bun.serve({
   port,
   hostname: '127.0.0.1',
+  // REUSE_PORT=1 lets several processes listen on the port (see bun-n.sh)
+  reusePort: process.env.REUSE_PORT === '1',
   fetch: (request) => worker.fetch(request, env, ctx),
 });
 
