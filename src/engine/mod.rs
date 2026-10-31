@@ -29,9 +29,9 @@ mod per_request;
 mod warm;
 
 #[cfg(any(feature = "nova", feature = "jsc"))]
-pub(crate) use per_request::{fetch, init};
+pub(crate) use per_request::{fetch, init, on_park};
 #[cfg(feature = "v8")]
-pub(crate) use warm::{fetch, init};
+pub(crate) use warm::{fetch, init, on_park};
 
 /// Binding types the engine serves: v8 builds an `env` object per binding,
 /// while nova and jsc list what they serve themselves.

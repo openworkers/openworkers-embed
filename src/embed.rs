@@ -115,6 +115,11 @@ impl Embed {
         self.pool.execute(&self.bundle, ops, request).await
     }
 
+    #[cfg(all(test, feature = "v8"))]
+    pub(crate) fn pool(&self) -> &WorkerPool {
+        &self.pool
+    }
+
     /// The file a GET or HEAD request names, if the assets directory has it.
     async fn asset(&self, request: &HttpRequest, path: &str) -> Option<HttpResponse> {
         let assets = self.host.assets.as_ref()?;

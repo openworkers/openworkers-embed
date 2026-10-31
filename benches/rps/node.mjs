@@ -14,7 +14,27 @@ const port = Number(process.env.PORT ?? 3000);
 const db = new DatabaseSync(database, { readOnly: true });
 const statements = new Map();
 
-function query({ sql, params }) {
+// With MEMO=1, each query runs once and its rows are kept, as in examples/rps.rs
+const memo = process.env.MEMO === '1' ? new Map() : null;
+
+function query(args) {
+  if (!memo) {
+    return execute(args);
+  }
+
+  const key = `${args.sql}\n${JSON.stringify(args.params)}`;
+  let rows = memo.get(key);
+
+  if (!rows) {
+    rows = execute(args);
+    memo.set(key, rows);
+  }
+
+  // The same rows each time: the most favorable case for the host
+  return rows;
+}
+
+function execute({ sql, params }) {
   let statement = statements.get(sql);
 
   if (!statement) {

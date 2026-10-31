@@ -429,3 +429,138 @@ async fn requests_past_the_places_of_a_thread_wait_for_one() {
 
     all.await.expect("a request never got a place");
 }
+
+/// A worker with routes: /stream streams for 2 s, a piece every 10 ms; /busy
+/// calls a command that is always ready, for 1 s; /spin calls for 1 s a
+/// command that works 1 ms in Rust; / answers at once.
+#[cfg(feature = "v8")]
+const TWO_ROUTES: &str = "export default {
+    async fetch(request, env) {
+        const path = new URL(request.url).pathname;
+
+        if (path === '/stream') {
+            const encoder = new TextEncoder();
+            const end = Date.now() + 2000;
+
+            return new Response(new ReadableStream({
+                async pull(controller) {
+                    if (Date.now() > end) {
+                        controller.close();
+
+                        return;
+                    }
+
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    controller.enqueue(encoder.encode('.'));
+                },
+            }));
+        }
+
+        if (path === '/spin') {
+            const end = Date.now() + 1000;
+
+            while (Date.now() < end) {
+                await env.EMBED.invoke('spin');
+            }
+
+            return new Response('spun');
+        }
+
+        if (path === '/busy') {
+            const end = Date.now() + 1000;
+            let calls = 0;
+
+            while (Date.now() < end) {
+                calls += await env.EMBED.invoke('one');
+            }
+
+            return new Response(String(calls));
+        }
+
+        return new Response('ok');
+    },
+};";
+
+#[cfg(feature = "v8")]
+fn two_routes() -> std::sync::Arc<Embed> {
+    std::sync::Arc::new(
+        Embed::builder(TWO_ROUTES)
+            .threads(1)
+            .command_sync("one", |_: ()| Ok::<_, String>(1))
+            .command_sync("spin", |_: ()| {
+                let end = std::time::Instant::now() + Duration::from_millis(1);
+
+                while std::time::Instant::now() < end {}
+
+                Ok::<_, String>(())
+            })
+            .build()
+            .unwrap(),
+    )
+}
+
+/// The time a request to / takes while a request to `path` runs on the thread.
+#[cfg(feature = "v8")]
+async fn wait_behind(path: &'static str) -> Duration {
+    let embed = two_routes();
+
+    // Two places, warm, so the build of an isolate does not count
+    let (a, b) = tokio::join!(embed.fetch(get("/")), embed.fetch(get("/")));
+    text(a.unwrap()).await;
+    text(b.unwrap()).await;
+
+    let first = {
+        let embed = embed.clone();
+
+        // /busy may end with the CPU limit, which also bounds the wait
+        tokio::spawn(async move {
+            if let Ok(response) = embed.fetch(get(path)).await {
+                response.body.collect().await.ok();
+            }
+        })
+    };
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let start = std::time::Instant::now();
+    let answer = text(embed.fetch(get("/")).await.unwrap()).await;
+    let waited = start.elapsed();
+
+    assert_eq!(answer, "ok");
+    first.await.unwrap();
+
+    waited
+}
+
+// A request that streams its body still runs, but the thread parks between
+// two pieces, so a new request starts then, not at the end of the stream
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_starts_while_another_one_streams() {
+    let waited = wait_behind("/stream").await;
+
+    eprintln!("waited behind /stream: {waited:?}");
+    assert!(waited < Duration::from_millis(300), "{waited:?}");
+}
+
+// A request that never lets the thread park does not hold a new request back
+// for long: the CPU limit of 50 ms ends it
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_starts_while_another_one_never_parks() {
+    let waited = wait_behind("/busy").await;
+
+    eprintln!("waited behind /busy: {waited:?}");
+    assert!(waited < Duration::from_millis(300), "{waited:?}");
+}
+
+// The CPU limit counts the time of the JavaScript only. A request that calls a
+// slow Rust command again and again does not hold a new request back for long
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_starts_while_another_one_works_in_rust() {
+    let waited = wait_behind("/spin").await;
+
+    eprintln!("waited behind /spin: {waited:?}");
+    assert!(waited < Duration::from_millis(300), "{waited:?}");
+}

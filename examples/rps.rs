@@ -4,6 +4,8 @@
 //!     cargo run --release --features axum --example rps <build-dir> <database>
 //!
 //! `THREADS` sets the worker threads (default 1), `PORT` the port (default 3000).
+//! With `MEMO=1`, each query runs once and its rows are kept: the bench then
+//! measures the host and the engine without the cost of SQLite.
 //! `benches/rps/README.md` tells how to make the build and the database.
 
 use openworkers_embed::Embed;
@@ -12,6 +14,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -20,6 +23,11 @@ static DATABASE: OnceLock<PathBuf> = OnceLock::new();
 thread_local! {
     // One connection per thread, opened on first use, as Node and Bun keep one
     static CONNECTION: RefCell<Option<Connection>> = const { RefCell::new(None) };
+
+    // The rows of each query, with MEMO=1
+    static MEMO: RefCell<Option<HashMap<String, Vec<Value>>>> = RefCell::new(
+        std::env::var("MEMO").is_ok_and(|v| v == "1").then(HashMap::new),
+    );
 }
 
 #[derive(Deserialize)]
@@ -76,6 +84,28 @@ fn query(connection: &Connection, query: Query) -> rusqlite::Result<Vec<Value>> 
 }
 
 fn run(args: Query) -> Result<Vec<Value>, String> {
+    MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+
+        let Some(memo) = memo.as_mut() else {
+            return execute(args);
+        };
+
+        let key = format!("{}\n{}", args.sql, Value::from(args.params.clone()));
+
+        if let Some(rows) = memo.get(&key) {
+            return Ok(rows.clone());
+        }
+
+        let rows = execute(args)?;
+
+        memo.insert(key, rows.clone());
+
+        Ok(rows)
+    })
+}
+
+fn execute(args: Query) -> Result<Vec<Value>, String> {
     CONNECTION.with(|cell| {
         let mut cell = cell.borrow_mut();
 

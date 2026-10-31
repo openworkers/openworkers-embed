@@ -6,10 +6,10 @@ use std::future::Future;
 use std::mem::ManuallyDrop;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::thread::ThreadId;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 
 type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 
@@ -19,6 +19,57 @@ pub(crate) struct WorkerPool {
     senders: Vec<mpsc::UnboundedSender<Job>>,
     loads: Vec<Arc<AtomicUsize>>,
     next: AtomicUsize,
+}
+
+/// Whether the caller of a request is gone. The job of a request is a task of
+/// its own, so a caller that drops its future does not stop it: the engine
+/// reads this to start a request only while its caller waits for it.
+#[derive(Clone)]
+pub(crate) struct Gone(Arc<Mark>);
+
+/// Held by the caller. Dropped with the future of the caller, it marks the
+/// request as gone.
+pub(crate) struct Caller(Arc<Mark>);
+
+#[derive(Default)]
+pub(crate) struct Mark {
+    gone: AtomicBool,
+    changed: Notify,
+}
+
+impl Caller {
+    pub fn new() -> (Caller, Gone) {
+        let mark = Arc::new(Mark::default());
+
+        (Caller(Arc::clone(&mark)), Gone(mark))
+    }
+}
+
+impl Gone {
+    pub fn is_gone(&self) -> bool {
+        self.0.gone.load(Ordering::SeqCst)
+    }
+
+    /// Resolves when the caller is gone.
+    #[cfg(feature = "v8")]
+    pub async fn wait(&self) {
+        loop {
+            let changed = self.0.changed.notified();
+
+            if self.is_gone() {
+                return;
+            }
+
+            changed.await;
+        }
+    }
+}
+
+impl Drop for Caller {
+    fn drop(&mut self) {
+        self.0.gone.store(true, Ordering::SeqCst);
+        self.0.changed.notify_waiters();
+    }
 }
 
 /// A job sent to a thread and not finished: counted until it ends or is dropped.
@@ -57,6 +108,33 @@ impl WorkerPool {
         })
     }
 
+    /// Jobs that run or wait, on all threads.
+    #[cfg(all(test, feature = "v8"))]
+    pub fn load(&self) -> usize {
+        self.loads
+            .iter()
+            .map(|load| load.load(Ordering::Relaxed))
+            .sum()
+    }
+
+    /// Runs `set` once on each thread of the pool, for a test that changes a
+    /// setting of its own threads only.
+    #[cfg(all(test, feature = "v8"))]
+    pub async fn on_each_thread(&self, set: fn()) {
+        for sender in &self.senders {
+            let (done, ran) = oneshot::channel();
+            let job: Job = Box::new(move || {
+                Box::pin(async move {
+                    set();
+                    let _ = done.send(());
+                })
+            });
+
+            sender.send(job).expect("the thread runs");
+            ran.await.expect("the job ran");
+        }
+    }
+
     /// Run a bundle for one request on the thread with the fewest requests.
     pub async fn execute(
         &self,
@@ -65,8 +143,9 @@ impl WorkerPool {
         request: HttpRequest,
     ) -> Result<HttpResponse, EmbedError> {
         let bundle = bundle.clone();
+        let (_caller, gone) = Caller::new();
 
-        self.run(move || engine::fetch(bundle, ops, request))
+        self.run(move || engine::fetch(bundle, ops, request, gone))
             .await?
     }
 
@@ -121,6 +200,7 @@ fn spawn(index: usize) -> mpsc::UnboundedSender<Job> {
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
+                .on_thread_park(engine::on_park)
                 .build()
                 .expect("tokio runtime for a worker thread");
 
