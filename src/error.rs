@@ -10,4 +10,6 @@ pub enum EmbedError {
     ThreadGone,
     #[error("the worker code does not parse: {0}")]
     Code(String),
+    #[error("the server stopped: {0}")]
+    Serve(std::io::Error),
 }

@@ -9,6 +9,8 @@
 //!   `hop` a fixed body made on another thread, the way the worker pool sends
 //!   a request to its thread, with no JavaScript.
 //! - `THREADS`: worker threads, default 1.
+//! - `SERVE`: `axum` (default) `axum::serve` on the tokio runtime, `workers`
+//!   `backend::axum::serve` on the worker threads.
 //! - `PORT`: default 3000.
 
 use openworkers_embed::Embed;
@@ -211,6 +213,16 @@ async fn main() {
     }
 
     let embed = builder.build().expect("worker code");
+
+    if std::env::var("SERVE").is_ok_and(|serve| serve == "workers") {
+        let listener = listener.into_std().unwrap();
+
+        openworkers_embed::backend::axum::serve(listener, embed)
+            .await
+            .unwrap();
+
+        return;
+    }
 
     axum::serve(listener, openworkers_embed::backend::axum::router(embed))
         .await

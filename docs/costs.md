@@ -243,3 +243,34 @@ request (1 / 4420 req/s), less than all of Node (253). At 1 connection it
 spends 424. Each thread sleeps between two requests, and each request wakes
 three threads in Embed: an Axum worker, the JavaScript thread, then the Axum
 worker again. Node wakes one.
+
+### Fix 4: serve HTTP on the worker threads
+
+`src/backend/axum.rs`: `backend::axum::serve(listener, embed)`. Each worker
+thread accepts connections from the listener, runs hyper on them, and runs
+the worker for their requests. `WorkerPool::run` runs a request on the
+thread it comes from when that thread is a worker thread of the pool. So a
+request wakes one thread, as in Node. `router` and `axum::serve` still work
+as before.
+
+Mode `SERVE=workers` of `examples/bench_server.rs`, case `embedw` of
+`bench/compare.sh`. Before is `axum::serve` with `router`, after fix 3:
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before        | req/s after         |
+| ------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+| `/api/stats` | 0.673, 0.686, 0.699 | 0.368, 0.361, 0.365 | 4549, 4392, 4332    | 4801, 4655, 4760    |
+| `/`          | 0.980, 0.965, 0.985 | 0.718, 0.705, 0.738 | 1929, 2040, 1903    | 1950, 1969, 1896    |
+| hello        | 0.181, 0.178, 0.179 | 0.111, 0.113, 0.116 | 18091, 16676, 17050 | 18664, 16600, 15885 |
+| invoke       | 0.189, 0.198, 0.222 | 0.129, 0.129, 0.129 | 15211, 13501, 13710 | 14067, 14324, 14912 |
+
+Node and Bun, measured again in the same session:
+
+| server | path         | p50, 1 conn (ms)    | req/s, 64 conn      |
+| ------ | ------------ | ------------------- | ------------------- |
+| Node   | `/api/stats` | 0.236, 0.237, 0.257 | 4056, 4042, 4018    |
+| Node   | `/`          | 0.726, 0.660, 0.684 | 1447, 1549, 1501    |
+| Bun    | `/api/stats` | 0.097, 0.097, 0.096 | 11906, 13120, 12629 |
+| Bun    | `/`          | 0.243, 0.238, 0.246 | 4574, 4513, 4975    |
+
+The hop cost more than mode `hop` shows (44 microseconds): about 300
+microseconds on `/api/stats`. With two threads awake, each one starts cold.

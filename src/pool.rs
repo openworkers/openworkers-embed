@@ -1,6 +1,7 @@
 use crate::bundle::Bundle;
 use crate::{EmbedError, engine};
 use openworkers_core::{HttpRequest, HttpResponse, OperationsHandle};
+use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -9,9 +10,17 @@ use tokio::sync::{mpsc, oneshot};
 
 type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 
+static POOLS: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// The pool and the index of the worker thread this is, if it is one.
+    static WORKER: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+}
+
 /// The threads that run workers. Each one has a single-threaded tokio runtime:
 /// a JavaScript engine keeps its state on the thread that made it.
 pub(crate) struct WorkerPool {
+    id: usize,
     senders: Vec<mpsc::UnboundedSender<Job>>,
     loads: Vec<Arc<AtomicUsize>>,
     next: AtomicUsize,
@@ -46,8 +55,11 @@ impl WorkerPool {
     pub fn start(threads: usize) -> Self {
         engine::init();
 
+        let id = POOLS.fetch_add(1, Ordering::Relaxed);
+
         Self {
-            senders: (0..threads).map(spawn).collect(),
+            id,
+            senders: (0..threads).map(|index| spawn(id, index)).collect(),
             loads: (0..threads).map(|_| Arc::default()).collect(),
             next: AtomicUsize::new(0),
         }
@@ -66,12 +78,49 @@ impl WorkerPool {
             .await?
     }
 
+    /// The number of worker threads.
+    #[cfg(feature = "axum")]
+    pub fn threads(&self) -> usize {
+        self.senders.len()
+    }
+
+    /// Run `job` on the worker thread `index`, for as long as it lasts.
+    #[cfg(feature = "axum")]
+    pub fn spawn_on<F, Fut>(&self, index: usize, job: F) -> Result<(), EmbedError>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        let job: Job = Box::new(move || Box::pin(job()));
+
+        self.senders[index]
+            .send(job)
+            .map_err(|_| EmbedError::ThreadGone)
+    }
+
     async fn run<F, Fut, T>(&self, job: F) -> Result<T, EmbedError>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = T> + 'static,
         T: Send + 'static,
     {
+        // A request that arrives on a worker thread runs there: a server on
+        // the worker threads pays no hop to another thread
+        if let Some((pool, index)) = WORKER.get()
+            && pool == self.id
+        {
+            let in_flight = InFlight::start(&self.loads[index]);
+            let (done, result) = oneshot::channel();
+
+            tokio::task::spawn_local(async move {
+                let _ = done.send(job().await);
+
+                drop(in_flight);
+            });
+
+            return result.await.map_err(|_| EmbedError::ThreadGone);
+        }
+
         let loads: Vec<usize> = self
             .loads
             .iter()
@@ -99,12 +148,14 @@ impl WorkerPool {
     }
 }
 
-fn spawn(index: usize) -> mpsc::UnboundedSender<Job> {
+fn spawn(pool: usize, index: usize) -> mpsc::UnboundedSender<Job> {
     let (sender, mut jobs) = mpsc::unbounded_channel::<Job>();
 
     std::thread::Builder::new()
         .name(format!("embed-js-{index}"))
         .spawn(move || {
+            WORKER.set(Some((pool, index)));
+
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()

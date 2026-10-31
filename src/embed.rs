@@ -102,6 +102,23 @@ impl Embed {
         self.pool.execute(&self.bundle, ops, request).await
     }
 
+    /// Run `job` on each worker thread. A backend serves HTTP there, so a
+    /// request runs on the thread that read it.
+    #[cfg(feature = "axum")]
+    pub(crate) fn on_each_thread<F, Fut>(&self, job: F) -> Result<(), EmbedError>
+    where
+        F: Fn(usize) -> Fut + Clone + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        for index in 0..self.pool.threads() {
+            let job = job.clone();
+
+            self.pool.spawn_on(index, move || job(index))?;
+        }
+
+        Ok(())
+    }
+
     /// The file a GET or HEAD request names, if the assets directory has it.
     async fn asset(&self, request: &HttpRequest) -> Option<HttpResponse> {
         let assets = self.host.assets.as_ref()?;
