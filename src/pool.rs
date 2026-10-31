@@ -43,14 +43,14 @@ fn least_loaded(loads: &[usize], start: usize) -> usize {
 }
 
 impl WorkerPool {
-    pub fn start(threads: usize) -> Self {
-        engine::init();
+    pub fn start(threads: usize) -> Result<Self, EmbedError> {
+        engine::init()?;
 
-        Self {
+        Ok(Self {
             senders: (0..threads).map(spawn).collect(),
             loads: (0..threads).map(|_| Arc::default()).collect(),
             next: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Run a bundle for one request on the thread with the fewest requests.
@@ -77,7 +77,11 @@ impl WorkerPool {
             .iter()
             .map(|load| load.load(Ordering::Relaxed))
             .collect();
-        let index = least_loaded(&loads, self.next.fetch_add(1, Ordering::Relaxed));
+        let rotating = self.next.fetch_add(1, Ordering::Relaxed);
+
+        // With every thread idle, thread 0 answers: its caches stay warm
+        let idle = loads.iter().all(|&load| load == 0);
+        let index = least_loaded(&loads, if idle { 0 } else { rotating });
         let in_flight = InFlight::start(&self.loads[index]);
         let (done, result) = oneshot::channel();
 

@@ -11,7 +11,9 @@ use openworkers_runtime_jsc::Worker;
 #[cfg(feature = "nova")]
 use openworkers_runtime_nova::Worker;
 
-pub(crate) fn init() {}
+pub(crate) fn init() -> Result<(), EmbedError> {
+    Ok(())
+}
 
 pub(crate) async fn fetch(
     bundle: Bundle,

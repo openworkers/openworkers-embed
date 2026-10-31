@@ -10,4 +10,6 @@ pub enum EmbedError {
     ThreadGone,
     #[error("the worker code does not parse: {0}")]
     Code(String),
+    #[error("a setting is wrong: {0}")]
+    Setting(String),
 }

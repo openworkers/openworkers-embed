@@ -80,6 +80,6 @@ With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile tim
 - A file of `assets(dir)` is read to the end before it is sent.
 - The worker code is trusted. On v8 there is no wall-clock limit, so a stream may live as long as its client reads it. The CPU and memory limits are the defaults of the runtime.
 - One worker per `Embed`. Replacing the code means building a new `Embed`.
-- On v8, one thread runs 8 requests at the same time, one per context of its isolate. A ninth request waits for a place. A stream keeps its place until the client has read it, so 8 open streams fill a thread.
+- On v8, one thread runs 8 requests at the same time, one per place: an isolate with its one context. A ninth request waits for a place. A stream keeps its place until the client has read it, so 8 open streams fill a thread.
 - A request goes to the thread with the fewest requests in flight.
 - On v8, a context is never retired. It keeps its globals for the life of the process.

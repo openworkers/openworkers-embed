@@ -68,7 +68,7 @@ impl EmbedBuilder {
         Ok(Embed {
             bundle: Bundle::compile(&self.code, host.bindings())?,
             host: Arc::new(host),
-            pool: WorkerPool::start(self.threads),
+            pool: WorkerPool::start(self.threads)?,
         })
     }
 }
