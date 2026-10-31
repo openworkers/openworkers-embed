@@ -83,3 +83,42 @@ What the baseline shows:
 - The render costs about 290 microseconds in Embed (`/` 1.17 ms against
   `/api/stats` 0.89 ms) and about 400 microseconds in Node (0.68 ms against
   0.25 ms). The render is not the problem.
+
+## The hop to the worker thread
+
+Mode `hop` of `examples/bench_server.rs` sends each request to another thread
+the way `src/pool.rs` does: an unbounded channel, `spawn_local`, and a
+`oneshot` back. It runs no JavaScript.
+
+| server     | p50, 1 conn (ms)    | req/s, 64 conn        |
+| ---------- | ------------------- | --------------------- |
+| Axum       | 0.044, 0.044, 0.044 | 176165, 178820, 183938 |
+| Axum + hop | 0.088, 0.088, 0.088 | 98717, 97742, 87918    |
+
+The hop costs 44 microseconds at 1 connection. At 1 connection both threads
+sleep between requests. Each request wakes the worker thread, then the Axum
+thread. strace counts 2 futex, 2 write and 3 epoll_wait per request in mode
+hello, against 1 epoll_wait for Axum alone. Node and Bun serve HTTP and run
+JavaScript on one thread, so they pay no hop.
+
+## The CPU limit on Linux
+
+`warm.rs` keeps the default CPU limit of 50 ms. On Linux, the runtime makes
+a POSIX timer for each request. It arms and disarms the timer at each turn
+of the event loop. It reads the CPU time of the thread at each turn. strace
+counts per request in mode hello: 1 timer_create, 1 timer_delete, 10
+timer_settime and 11 clock_gettime. Outside Linux there is no timer.
+
+With `max_cpu_time_ms: 0`, these syscalls go:
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before        | req/s after         |
+| ------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+| hello        | 0.176, 0.185, 0.179 | 0.158, 0.166, 0.174 | 15976, 14746, 15308 | 22590, 21647, 20206 |
+| `/api/stats` | 0.942, 0.885, 0.860 | 0.819, 0.880, 0.851 | 2841, 2875, 2564    | 2914, 3097, 2801    |
+| `/`          | 1.175, 1.180, 1.165 | 1.118, 1.136, 1.177 | 1223, 1515, 1460    | 1666, 1568, 1644    |
+
+The limit costs about 20 microseconds of CPU per request on this VM
+(15300 against 21500 req/s at 64 connections on hello). It is not kept off:
+the test `a_worker_the_runtime_stops_ends_its_stream_with_an_error` needs
+it. The fix belongs in the runtime: one timer per thread instead of one per
+request, and fewer syscalls per turn.

@@ -5,15 +5,20 @@
 //! `node bench/seed.mjs` and the build of `bench/app`. Environment:
 //!
 //! - `MODE`: `app` (default) the bench app, `hello` a worker with a fixed body,
-//!   `invoke` a worker that calls one command, `axum` a fixed body with no worker.
+//!   `invoke` a worker that calls one command, `axum` a fixed body with no worker,
+//!   `hop` a fixed body made on another thread, the way the worker pool sends
+//!   a request to its thread, with no JavaScript.
 //! - `THREADS`: worker threads, default 1.
 //! - `PORT`: default 3000.
 
 use openworkers_embed::Embed;
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 const HELLO: &str = "export default { fetch: () => new Response('hello') };";
 
@@ -55,6 +60,30 @@ struct Totals {
     wins: i64,
     losses: i64,
     draws: i64,
+}
+
+type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
+
+/// A thread like the ones of `src/pool.rs`: a current thread runtime, a
+/// `LocalSet`, and a channel of jobs it spawns locally.
+fn hop_thread() -> mpsc::UnboundedSender<Job> {
+    let (sender, mut jobs) = mpsc::unbounded_channel::<Job>();
+
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+
+        local.block_on(&runtime, async move {
+            while let Some(job) = jobs.recv().await {
+                tokio::task::spawn_local(job());
+            }
+        });
+    });
+
+    sender
 }
 
 fn bench_dir() -> PathBuf {
@@ -117,6 +146,29 @@ async fn main() {
 
     if mode == "axum" {
         let router = axum::Router::new().fallback(|| async { "hello" });
+
+        axum::serve(listener, router).await.unwrap();
+
+        return;
+    }
+
+    if mode == "hop" {
+        let jobs = hop_thread();
+        let router = axum::Router::new().fallback(move || {
+            let jobs = jobs.clone();
+
+            async move {
+                let (done, answer) = tokio::sync::oneshot::channel();
+                let job: Job = Box::new(move || {
+                    Box::pin(async move {
+                        let _ = done.send("hello");
+                    })
+                });
+
+                jobs.send(job).unwrap();
+                answer.await.unwrap()
+            }
+        });
 
         axum::serve(listener, router).await.unwrap();
 
