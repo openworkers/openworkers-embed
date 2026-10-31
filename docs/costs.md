@@ -4,6 +4,70 @@ This file holds the measures of the branch `experiment/warm-places`. It ranks
 the costs of one request on one worker thread of Embed. It compares them with
 Node.js and Bun on the same page.
 
+## Summary
+
+Measured on a cloud VM (below), one worker thread, p50 at 1 connection and
+requests per second at 64 connections, the mean of three runs of 10 s.
+Embed is served with `backend::axum::serve` (fix 4).
+
+| server | path         | p50 before | p50 now  | req/s before | req/s now |
+| ------ | ------------ | ---------- | -------- | ------------ | --------- |
+| Embed  | `/`          | 1.173 ms   | 0.633 ms | 1399         | 2173      |
+| Node   | `/`          |            | 0.675 ms |              | 1500      |
+| Bun    | `/`          |            | 0.228 ms |              | 4639      |
+| Embed  | `/api/stats` | 0.896 ms   | 0.301 ms | 2760         | 5327      |
+| Node   | `/api/stats` |            | 0.247 ms |              | 4190      |
+| Bun    | `/api/stats` |            | 0.096 ms |              | 12475     |
+| Embed  | hello        | 0.180 ms   | 0.104 ms | 15343        | 18480     |
+| Node   | hello        |            | 0.047 ms |              | 38810     |
+| Bun    | hello        |            | 0.040 ms |              | 119800    |
+
+With `axum::serve` and `router`, as before fix 4, Embed now takes 0.911 ms
+and 2115 req/s on `/`, 0.581 ms and 5117 req/s on `/api/stats`.
+
+So on this VM Embed now passes Node on page `/`, at 1 connection and at 64.
+On `/api/stats` it passes Node at 64 connections, and it is 54
+microseconds behind at 1 connection. Bun stays far ahead.
+
+The costs per request at one thread, ranked by what their fix gained on
+`/api/stats` at 1 connection:
+
+| rank | cost                                              | gain at 1 conn  | gain at 64 conn | fix |
+| ---- | ------------------------------------------------- | --------------- | --------------- | --- |
+| 1    | three threads to wake: Axum, worker, Axum         | 310 us          | +6 %            | 4   |
+| 2    | asset misses through `tokio::fs`, 3 per request   | 150 us          | +10 %           | 2   |
+| 3    | an event loop round trip per `invoke`             | 50 us           | +47 %           | 3   |
+| 4    | a copy of the 126 KB script per request           | 27 us           | +6 %            | 5   |
+| 5    | the asset misses that are left, 3 stat            | 20 us           | +1 %            | 7   |
+| 6    | the CPU limit on Linux, 4 syscalls per turn       | 0 to 10 us      | +13 % on hello  | 1   |
+| 7    | `reset` evaluates a script per request            | 6 us            | +5 %            | 6   |
+| -    | SQLite locks per statement (bench only)           | 20 us           | 0 %             | -   |
+
+What is left, not fixed, in microseconds per request on this VM:
+
+- The CPU limit on Linux: about 10 (2 timer_settime per turn, 5 turns, and
+  a timer_create and a timer_delete per request). Not on macOS.
+- The turns of a request: 5 per request, each with the V8 locker, the turn
+  guard and the timer. Merging them could save about 10 to 15.
+- `URL`: 2.85 per parse against 1.07 in Node. SvelteKit parses a few.
+- The HTTP layer: hyper and Axum take about 8 more than `node:http` on hello.
+- GC: about 12 (one scavenge of 1 ms every 85 requests). The heap grows by
+  about 10 KB per request between scavenges.
+
+The candidates of CLAUDE.md:
+
+- HTTP layer: Axum alone answers in 0.044 ms, Node in 0.047 ms. Not a cost
+  by itself. Its threads are (rank 1).
+- The hop to the worker thread: rank 1.
+- `reset()`: 8 to 12 microseconds, now 3.4 to 5.6 (rank 7).
+- The conversion of Event and Response: about 4 to build the Request and
+  about 8 to read the Response, lock and turn included.
+- The JSON round trip of `invoke`: a few microseconds. The cost was the
+  event loop round trip around it (rank 3).
+- The global `Mutex<HashMap>` of foreground tasks: it is taken only when V8
+  posts a task. It shows in no profile.
+- The `select` and `spawn_local` of `respond()`: about 2 microseconds.
+
 ## The machine
 
 The measures of this file come from a cloud VM, not from the Apple M5 Max of

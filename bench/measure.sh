@@ -9,14 +9,21 @@
 set -e
 url=$1
 seconds=${2:-10}
+
+# oha runs on CPUs 2 and 3 where taskset exists (Linux). macOS has no taskset.
+if command -v taskset > /dev/null 2>&1; then
+  pin="taskset -c 2,3"
+else
+  pin=""
+fi
 runs=${3:-3}
 
 # Warm the server: JIT, caches and contexts
-taskset -c 2,3 oha --no-tui -z 3s -c 64 "$url" > /dev/null
+$pin oha --no-tui -z 3s -c 64 "$url" > /dev/null
 
 for run in $(seq "$runs"); do
-  one=$(taskset -c 2,3 oha --no-tui --output-format json -z "${seconds}s" -c 1 "$url")
-  many=$(taskset -c 2,3 oha --no-tui --output-format json -z "${seconds}s" -c 64 "$url")
+  one=$($pin oha --no-tui --output-format json -z "${seconds}s" -c 1 "$url")
+  many=$($pin oha --no-tui --output-format json -z "${seconds}s" -c 64 "$url")
   echo "$one" "$many" | python3 -c '
 import json, sys
 decoder = json.JSONDecoder()
