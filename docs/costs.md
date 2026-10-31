@@ -64,7 +64,7 @@ The candidates of CLAUDE.md:
 - HTTP layer: Axum alone answers in 0.044 ms, Node in 0.047 ms. Not a cost
   by itself. Its threads are (rank 1).
 - The hop to the worker thread: rank 1.
-- `reset()`: 8 to 12 microseconds, now 3.4 to 5.6 (rank 7).
+- `reset()`: 8 to 12 microseconds, now 3.4 to 5.6 (rank 5).
 - The conversion of Event and Response: about 4 to build the Request and
   about 8 to read the Response, lock and turn included.
 - The JSON round trip of `invoke`: a few microseconds. The cost was the
