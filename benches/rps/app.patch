@@ -1,0 +1,59 @@
+diff --git a/package.json b/package.json
+index 1b46a23..886684b 100644
+--- a/package.json
++++ b/package.json
+@@ -18,7 +18,7 @@
+     "deploy:prod": "ow main worker upload rock-paper-scissors ./build"
+   },
+   "devDependencies": {
+-    "@openworkers/adapter-sveltekit": "^0.5.9",
++    "@openworkers/adapter-sveltekit": "0.6.2",
+     "@openworkers/workers-types": "^0.1.9",
+     "@sveltejs/kit": "^2.50.1",
+     "@sveltejs/vite-plugin-svelte": "^6.2.4",
+diff --git a/src/hooks.server.ts b/src/hooks.server.ts
+index 4c2a511..2ad6fd4 100644
+--- a/src/hooks.server.ts
++++ b/src/hooks.server.ts
+@@ -1,6 +1,24 @@
+ import { dev } from '$app/environment';
+ import type { Handle } from '@sveltejs/kit';
+ 
++// Bench: the host owns SQLite and answers platform.invoke('query'). The SQL of
++// $lib/db is Postgres; it is rewritten for SQLite here, once per statement.
++const rewritten = new Map<string, string>();
++
++function sqlite(sql: string): string {
++  let out = rewritten.get(sql);
++
++  if (out === undefined) {
++    out = sql
++      .replace(/(\w+)::float/g, 'CAST($1 AS REAL)')
++      .replace(/(\$\d+|\w+)::(uuid|int|text)/g, '$1')
++      .replace(/\$\d+/g, '?');
++    rewritten.set(sql, out);
++  }
++
++  return out;
++}
++
+ export const handle: Handle = async ({ event, resolve }) => {
+   if (dev && !event.platform) {
+     const { DevDatabase } = await import('$lib/database-dev');
+@@ -9,6 +27,16 @@ export const handle: Handle = async ({ event, resolve }) => {
+         DATABASE: new DevDatabase()
+       }
+     };
++  } else if (event.platform && !event.platform.env.DATABASE && event.platform.invoke) {
++    const platform = event.platform;
++    const invoke = platform.invoke;
++    const DATABASE = {
++      query: (sql: string, params?: unknown[]) =>
++        invoke('query', { sql: sqlite(sql), params: params ?? [] })
++    } as BindingDatabase;
++
++    // The env of a host may not take new keys: give the app a copy
++    event.platform = { ...platform, env: { ...platform.env, DATABASE } };
+   }
+ 
+   return resolve(event);

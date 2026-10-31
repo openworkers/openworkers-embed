@@ -43,6 +43,7 @@ tokio = { version = "1", features = ["rt", "sync", "fs", "macros"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["async_tokio"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
@@ -55,3 +56,16 @@ harness = false
 [[example]]
 name = "server"
 required-features = ["axum"]
+
+[[example]]
+name = "rps"
+required-features = ["axum"]
+
+[[example]]
+name = "ladder"
+required-features = ["axum"]
+
+# Release with line tables, for samply. The numbers come from release.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
