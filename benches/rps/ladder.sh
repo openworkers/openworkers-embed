@@ -31,6 +31,9 @@ start() {
     n-hello) exec node "$ROOT/benches/rps/ladder.mjs" "$WORKERS/hello.js" ;;
     n-stream) exec node "$ROOT/benches/rps/ladder.mjs" "$WORKERS/stream.js" ;;
     n-invoke3) exec node "$ROOT/benches/rps/ladder.mjs" "$WORKERS/invoke3.js" ;;
+    b-raw) exec bun "$ROOT/benches/rps/ladder-bun.ts" raw ;;
+    b-hello) exec bun "$ROOT/benches/rps/ladder-bun.ts" "$WORKERS/hello.js" ;;
+    b-invoke3) exec bun "$ROOT/benches/rps/ladder-bun.ts" "$WORKERS/invoke3.js" ;;
   esac
 }
 
