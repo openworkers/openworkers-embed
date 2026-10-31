@@ -19,9 +19,10 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot};
 
-type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
+type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
-/// One thread with a current-thread runtime and a LocalSet, as in src/pool.rs.
+/// One thread with a current-thread runtime that runs each job as a task, as
+/// in src/pool.rs.
 fn spawn() -> mpsc::UnboundedSender<Job> {
     let (sender, mut jobs) = mpsc::unbounded_channel::<Job>();
 
@@ -30,11 +31,10 @@ fn spawn() -> mpsc::UnboundedSender<Job> {
             .enable_all()
             .build()
             .unwrap();
-        let local = tokio::task::LocalSet::new();
 
-        local.block_on(&runtime, async move {
+        runtime.block_on(async move {
             while let Some(job) = jobs.recv().await {
-                tokio::task::spawn_local(job());
+                tokio::spawn(job());
             }
         });
     });

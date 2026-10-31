@@ -102,12 +102,12 @@ where
         ResponseBody::Stream(chunks) => {
             let (relay, body) = mpsc::channel(16);
 
-            tokio::task::spawn_local(relay_chunks(execution, chunks, relay));
+            crate::pool::spawn_here(relay_chunks(execution, chunks, relay));
 
             ResponseBody::Stream(body)
         }
         body => {
-            tokio::task::spawn_local(async move {
+            crate::pool::spawn_here(async move {
                 let _ = execution.await;
             });
 

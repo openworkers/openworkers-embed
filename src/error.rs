@@ -8,6 +8,8 @@ pub enum EmbedError {
     NoResponse,
     #[error("the worker thread stopped")]
     ThreadGone,
+    #[error("the request panicked on its worker thread")]
+    Panicked,
     #[error("the worker code does not parse: {0}")]
     Code(String),
     #[error("a setting is wrong: {0}")]

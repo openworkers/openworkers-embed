@@ -1,15 +1,19 @@
 use crate::bundle::Bundle;
 use crate::{EmbedError, engine};
 use openworkers_core::{HttpRequest, HttpResponse, OperationsHandle};
+use std::cell::Cell;
 use std::future::Future;
+use std::mem::ManuallyDrop;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
+use std::thread::ThreadId;
 use tokio::sync::{mpsc, oneshot};
 
 type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 
-/// The threads that run workers. Each one has a single-threaded tokio runtime:
+/// The threads that run workers. Each one has a current-thread tokio runtime:
 /// a JavaScript engine keeps its state on the thread that made it.
 pub(crate) struct WorkerPool {
     senders: Vec<mpsc::UnboundedSender<Job>>,
@@ -97,7 +101,15 @@ impl WorkerPool {
             .send(job)
             .map_err(|_| EmbedError::ThreadGone)?;
 
-        result.await.map_err(|_| EmbedError::ThreadGone)
+        // The job drops its sender without a send when it panics. The thread
+        // goes on, and its channel stays open.
+        result.await.map_err(|_| {
+            if self.senders[index].is_closed() {
+                EmbedError::ThreadGone
+            } else {
+                EmbedError::Panicked
+            }
+        })
     }
 }
 
@@ -111,11 +123,12 @@ fn spawn(index: usize) -> mpsc::UnboundedSender<Job> {
                 .enable_all()
                 .build()
                 .expect("tokio runtime for a worker thread");
-            let local = tokio::task::LocalSet::new();
 
-            local.block_on(&runtime, async move {
+            WORKER.with(|worker| worker.set(true));
+
+            runtime.block_on(async move {
                 while let Some(job) = jobs.recv().await {
-                    tokio::task::spawn_local(job());
+                    spawn_here(job());
                 }
             });
         })
@@ -124,9 +137,118 @@ fn spawn(index: usize) -> mpsc::UnboundedSender<Job> {
     sender
 }
 
+thread_local! {
+    /// Set on a worker thread, before its runtime runs.
+    static WORKER: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run a future that is not `Send` as a task of the runtime of this worker
+/// thread. Called anywhere else, it aborts the process.
+///
+/// The engine runs its ops as tasks of the runtime, so a request runs as one
+/// too: a wake between a task and the `block_on` future is slow.
+pub(crate) fn spawn_here<F>(future: F)
+where
+    F: Future<Output = ()> + 'static,
+{
+    if !WORKER.with(Cell::get) {
+        abort("spawn_here outside a worker thread");
+    }
+
+    // The handle drops here, on this thread, and the output is ()
+    drop(tokio::spawn(OnThisThread {
+        thread: std::thread::current().id(),
+        future: ManuallyDrop::new(future),
+    }));
+}
+
+/// A future that stays on the thread that made it. It checks this each time it
+/// is polled or dropped, and aborts the process on another thread.
+struct OnThisThread<F> {
+    thread: ThreadId,
+    future: ManuallyDrop<F>,
+}
+
+// SAFETY: `check` runs in each poll and in drop, and aborts the process on a
+// thread other than the one that made the future. So the future is never
+// polled or dropped on another thread. Do not remove the checks.
+unsafe impl<F> Send for OnThisThread<F> {}
+
+impl<F> OnThisThread<F> {
+    fn check(&self) {
+        if std::thread::current().id() != self.thread {
+            abort("a worker future left its thread");
+        }
+    }
+}
+
+impl<F: Future> Future for OnThisThread<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        self.check();
+
+        // SAFETY: a projection to the future, which is never moved out
+        unsafe { self.map_unchecked_mut(|this| &mut *this.future) }.poll(cx)
+    }
+}
+
+impl<F> Drop for OnThisThread<F> {
+    fn drop(&mut self) {
+        self.check();
+
+        // SAFETY: dropped once, here, and never used again
+        unsafe { ManuallyDrop::drop(&mut self.future) };
+    }
+}
+
+fn abort(reason: &str) -> ! {
+    eprintln!("openworkers-embed: {reason}");
+    std::process::abort();
+}
+
 #[cfg(test)]
 mod tests {
-    use super::least_loaded;
+    use super::{Job, WorkerPool, least_loaded};
+    use crate::EmbedError;
+    use std::sync::atomic::Ordering;
+    use tokio::sync::oneshot;
+
+    /// A job in flight when the pool drops is dropped on its worker thread: the
+    /// thread check of OnThisThread does not abort.
+    #[tokio::test]
+    async fn a_pool_that_drops_drops_its_jobs_on_their_thread() {
+        let pool = WorkerPool::start(1).unwrap();
+        let (started, running) = oneshot::channel::<()>();
+        let (held, dropped) = oneshot::channel::<()>();
+
+        let job: Job = Box::new(move || {
+            Box::pin(async move {
+                let _held = held;
+                let _ = started.send(());
+
+                std::future::pending::<()>().await;
+            })
+        });
+
+        pool.senders[0].send(job).unwrap();
+        running.await.unwrap();
+        drop(pool);
+
+        // The sender drops with the job, on the worker thread, as the runtime drops
+        assert!(dropped.await.is_err());
+    }
+
+    /// A job that panics fails its caller only: the thread serves the next job.
+    #[tokio::test]
+    async fn a_job_that_panics_leaves_its_thread_running() {
+        let pool = WorkerPool::start(1).unwrap();
+        let failed = pool.run(|| async { panic!("a job that panics") }).await;
+
+        assert!(matches!(failed, Err(EmbedError::Panicked)), "{failed:?}");
+        assert_eq!(pool.loads[0].load(Ordering::Relaxed), 0);
+        assert_eq!(pool.run(|| async { 1 }).await.unwrap(), 1);
+    }
 
     #[test]
     fn the_least_loaded_thread_is_chosen() {

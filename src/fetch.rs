@@ -61,8 +61,8 @@ pub(crate) async fn fetch(request: HttpRequest) -> Result<HttpResponse, String> 
 
     let (sender, body) = mpsc::channel(BODY_BUFFER);
 
-    // spawn, not spawn_local: this runs on the runtime of a worker thread, which
-    // already has a LocalSet, and the pump needs nothing local
+    // A plain spawn: this runs on the runtime of a worker thread, and the pump
+    // needs nothing local
     tokio::spawn(async move {
         let mut stream = response.bytes_stream();
 
