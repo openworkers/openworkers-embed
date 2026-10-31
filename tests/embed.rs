@@ -301,13 +301,14 @@ async fn a_response_streams_out_while_the_worker_runs() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_long_stream_arrives_whole() {
+    // The CPU limit bounds the stream; keep the pulls under it in debug
     let worker = "export default {
         fetch() {
             let n = 0;
 
             return new Response(new ReadableStream({
                 pull(controller) {
-                    if (n++ < 5000) {
+                    if (n++ < 500) {
                         controller.enqueue(new TextEncoder().encode('x'));
                     } else {
                         controller.close();
@@ -323,7 +324,7 @@ async fn a_long_stream_arrives_whole() {
         .await
         .expect("the stream did not end");
 
-    assert_eq!(body.len(), 5000);
+    assert_eq!(body.len(), 500);
 }
 
 // nova drains a stream before it answers, and an endless one never ends
@@ -554,8 +555,9 @@ async fn a_request_starts_while_another_one_never_parks() {
     assert!(waited < Duration::from_millis(300), "{waited:?}");
 }
 
-// The CPU limit counts the time of the JavaScript only. A request that calls a
-// slow Rust command again and again does not hold a new request back for long
+// A request that calls a slow Rust command again and again does not hold a new
+// request back for long: MAX_HOLD starts it, and the CPU limit, which counts a
+// command that answers at once, ends the slow request
 #[cfg(feature = "v8")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_starts_while_another_one_works_in_rust() {
@@ -563,4 +565,117 @@ async fn a_request_starts_while_another_one_works_in_rust() {
 
     eprintln!("waited behind /spin: {waited:?}");
     assert!(waited < Duration::from_millis(300), "{waited:?}");
+}
+
+// A worker that never yields ends with the CPU limit, on Linux and on macOS
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_never_yields_ends_with_the_cpu_limit() {
+    let embed = Embed::builder("export default { fetch() { while (true) {} } };")
+        .threads(1)
+        .build()
+        .unwrap();
+    let start = std::time::Instant::now();
+    let answer = tokio::time::timeout(Duration::from_secs(5), embed.fetch(get("/")))
+        .await
+        .expect("the request was not cut");
+
+    assert!(
+        matches!(
+            answer,
+            Err(EmbedError::Worker(
+                openworkers_core::TerminationReason::CpuTimeLimit
+            ))
+        ),
+        "{answer:?}"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+// A worker that tries to replace the timer map of its place: the runtime
+// keeps the map read-only and resets with what it took before guest code, so
+// the next requests keep their timers
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_cannot_break_the_timers_of_its_place() {
+    let worker = "export default {
+        async fetch(request) {
+            if (new URL(request.url).pathname === '/break') {
+                globalThis.__timerCallbacks = null;
+
+                return new Response('ok');
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 1));
+
+            return new Response('ok');
+        },
+    };";
+    let embed = Embed::builder(worker).threads(1).build().unwrap();
+
+    assert_eq!(text(embed.fetch(get("/break")).await.unwrap()).await, "ok");
+    assert_eq!(text(embed.fetch(get("/")).await.unwrap()).await, "ok");
+    assert_eq!(text(embed.fetch(get("/")).await.unwrap()).await, "ok");
+}
+
+// A stream whose reader does not read: the pieces made stay bounded and stop
+// growing, and the thread parks, so another request runs meanwhile
+#[cfg(feature = "v8")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_that_waits_for_its_reader_is_bounded_and_lets_others_run() {
+    let worker = "export default {
+        fetch(request, env) {
+            if (new URL(request.url).pathname !== '/stream') {
+                return new Response('ok');
+            }
+
+            const piece = new TextEncoder().encode('x');
+
+            return new Response(new ReadableStream({
+                pull(controller) {
+                    env.EMBED.invoke('count');
+                    controller.enqueue(piece);
+                },
+            }));
+        },
+    };";
+    let made = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = made.clone();
+    let embed = Embed::builder(worker)
+        .threads(1)
+        .command_sync("count", move |_: ()| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok::<_, String>(())
+        })
+        .build()
+        .unwrap();
+
+    // Three channels of 16 pieces stand between the pump and the reader
+    let stream = embed.fetch(get("/stream")).await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let first = made.load(std::sync::atomic::Ordering::SeqCst);
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let second = made.load(std::sync::atomic::Ordering::SeqCst);
+
+    assert!(first <= 64, "{first} pieces made with no reader");
+    assert_eq!(first, second, "the pump went on with no room");
+
+    let start = std::time::Instant::now();
+
+    assert_eq!(text(embed.fetch(get("/")).await.unwrap()).await, "ok");
+    assert!(
+        start.elapsed() < Duration::from_millis(300),
+        "{:?}",
+        start.elapsed()
+    );
+
+    drop(stream);
 }

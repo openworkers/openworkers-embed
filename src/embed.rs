@@ -43,6 +43,11 @@ impl EmbedBuilder {
     }
 
     /// Like [`command`](Self::command), for a function that does not wait.
+    ///
+    /// The function runs inside the turn of the worker's JavaScript, so its
+    /// time counts in the CPU limit of the request: 50 ms by default. A
+    /// request whose functions and JavaScript pass it ends with
+    /// `TerminationReason::CpuTimeLimit`.
     pub fn command_sync<A, R, E, F>(self, name: &str, function: F) -> Self
     where
         A: DeserializeOwned + Send + 'static,

@@ -35,6 +35,7 @@ export const load = async ({ platform }) => ({
 
 - Arguments and results are JSON. A command that returns `Err` throws an `Error` in the worker.
 - `command` takes an async function. `command_sync` takes a function that does not wait.
+- A function that answers at once runs inside the turn of the worker's JavaScript: its time counts in the CPU limit of the request, 50 ms by default.
 - `assets(dir)` serves the files of `dir` for GET and HEAD requests, before the worker runs. The worker also reads them as `env.ASSETS`. Files are read on each request.
 - The `fetch` of the worker goes out over HTTP, with the client settings of the runner: a redirect is the answer and not a hop, a pause of 10 seconds from the server ends the call, and the body streams back. There is no egress filter, because the code is trusted. The `fetch` feature, on by default, brings `reqwest`.
 - A response of the worker streams out: `Embed::fetch` returns as soon as the worker has one, and the body follows while the worker keeps running. A client that drops the body ends the stream, and a worker that the runtime stops while its body streams ends the body with an error. nova drains a stream before it answers, so an endless stream never ends there.

@@ -30,6 +30,18 @@ const INVOKE: &str = "export default {
     },
 };";
 
+const INVOKE3: &str = "export default {
+    async fetch(request, env) {
+        let sum = 0;
+
+        for (let i = 0; i < 3; i++) {
+            sum += await env.EMBED.invoke('add', { a: i, b: 1 });
+        }
+
+        return new Response(String(sum));
+    },
+};";
+
 #[derive(Deserialize)]
 struct Pair {
     a: u32,
@@ -80,7 +92,7 @@ fn bench_latency(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
 
-    for (name, code) in [("hello", HELLO), ("invoke", INVOKE)] {
+    for (name, code) in [("hello", HELLO), ("invoke", INVOKE), ("invoke3", INVOKE3)] {
         let embed = embed(code, None, 1);
 
         group.bench_function(name, |b| {

@@ -325,7 +325,8 @@ mod tests {
     }
 
     /// A worker that counts each request in Rust when it starts; /hold then
-    /// waits for `release`, /spin calls a 1 ms Rust command for 300 ms.
+    /// waits for `release`, /spin calls a 1 ms Rust command for 300 ms (the
+    /// CPU limit ends it at about 50 ms).
     fn counting(counted: &Arc<AtomicUsize>, release: &Arc<Notify>) -> Arc<Embed> {
         let worker = "export default {
             async fetch(request, env) {
@@ -434,7 +435,8 @@ mod tests {
         b.unwrap();
         idle(&embed).await;
 
-        // One request keeps the thread busy for 300 ms: it never parks
+        // One request keeps the thread busy: it never parks. The CPU limit
+        // (50 ms) ends it, since its Rust calls run in the turn of JavaScript.
         let spin = {
             let embed = embed.clone();
 
@@ -446,13 +448,16 @@ mod tests {
         }
 
         // 2 more get a permit and wait in admit, and their callers give up
-        for _ in 0..2 {
-            let late = tokio::time::timeout(Duration::from_millis(50), embed.fetch(get())).await;
+        // together, before the CPU limit ends the spinning request
+        let late = || tokio::time::timeout(Duration::from_millis(20), embed.fetch(get()));
+        let (first, second) = tokio::join!(late(), late());
 
-            assert!(late.is_err(), "a request started while another one ran");
-        }
+        assert!(
+            first.is_err() && second.is_err(),
+            "a request started while another one ran"
+        );
 
-        spin.await.unwrap().unwrap();
+        let _ = spin.await.unwrap();
         idle(&embed).await;
 
         // 2 to warm, 1 spin
