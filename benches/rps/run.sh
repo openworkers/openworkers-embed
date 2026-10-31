@@ -6,7 +6,9 @@
 #
 # Each round starts each server, warms it, then measures one connection and
 # 64 connections. The servers take turns in each round, so a change of the
-# machine load falls on all of them. One line per measure goes to stdout:
+# machine load falls on all of them. With BASE=<binary> and "base" in
+# SERVERS, an older build of examples/rps runs in turn with the new one.
+# One line per measure goes to stdout:
 #   server round connections req/s p50_ms p99_ms load_1min
 
 set -eu
@@ -24,6 +26,7 @@ SERVERS=${SERVERS:-"embed node bun"}
 start() {
   case $1 in
     embed) PORT=$PORT exec "$ROOT/target/release/examples/rps" "$BUILD" "$DATABASE" ;;
+    base) PORT=$PORT exec "$BASE" "$BUILD" "$DATABASE" ;;
     node) PORT=$PORT exec node "$ROOT/benches/rps/node.mjs" "$BUILD" "$DATABASE" ;;
     bun) PORT=$PORT exec bun "$ROOT/benches/rps/bun.ts" "$BUILD" "$DATABASE" ;;
   esac
