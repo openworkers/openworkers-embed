@@ -274,3 +274,24 @@ Node and Bun, measured again in the same session:
 
 The hop cost more than mode `hop` shows (44 microseconds): about 300
 microseconds on `/api/stats`. With two threads awake, each one starts cold.
+
+## The copy of the bundle for each request
+
+The gdb samples of `/api/stats` in mode `SERVE=workers` show 13 of 150 in
+`memcpy`. Most of them come from `String::clone` under the Axum handler.
+`WorkerPool::execute` clones the `Bundle` to send it with the request, and
+the bundle holds the `Script`: the whole code of the worker, 126 KB for the
+bench app. So each request copied 126 KB, and allocated and freed it.
+
+### Fix 5: share the script
+
+`src/bundle.rs`: the bundle holds an `Arc<Script>`. A request clones the
+`Arc`. A new context still gets its own copy of the script.
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before        | req/s after         |
+| ------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+| `/api/stats` | 0.368, 0.361, 0.365 | 0.339, 0.346, 0.330 | 4801, 4655, 4760    | 5047, 5073, 4958    |
+| `/`          | 0.718, 0.705, 0.738 | 0.698, 0.642, 0.660 | 1950, 1969, 1896    | 2097, 2041, 2063    |
+| hello        | 0.111, 0.113, 0.116 | 0.111, 0.110, 0.108 | 18664, 16600, 15885 | 18077, 17990, 18424 |
+
+The hello worker is small, so its copy cost little.
