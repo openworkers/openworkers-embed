@@ -185,6 +185,12 @@ async fn main() {
     let db =
         Connection::open_with_flags(bench_dir().join("rps.db"), OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("bench/rps.db: run node bench/seed.mjs");
+
+    // The read lock stays held between statements, as in the Node server:
+    // there a statement stays open after it ran, and so does its lock.
+    // Without it, each statement costs 4 fcntl, 2 stat and 1 pread here.
+    db.pragma_update(None, "locking_mode", "EXCLUSIVE")
+        .expect("locking_mode");
     let db = Arc::new(Mutex::new(db));
     let (a, b, c) = (db.clone(), db.clone(), db);
 

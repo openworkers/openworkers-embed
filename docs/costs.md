@@ -122,3 +122,124 @@ The limit costs about 20 microseconds of CPU per request on this VM
 the test `a_worker_the_runtime_stops_ends_its_stream_with_an_error` needs
 it. The fix belongs in the runtime: one timer per thread instead of one per
 request, and fewer syscalls per turn.
+
+### Fix 1: the timer counts the turn (runtime)
+
+`openworkers-runtime-v8`, `src/security/cpu_enforcer.rs`. On Linux, disarming
+the timer answers the CPU time it had left. That is the budget left. So a
+turn no longer reads the CPU clock twice: it costs 2 syscalls instead of 4.
+The limit works as before.
+
+| case    | p50 before (ms)     | p50 after (ms)      | req/s before        | req/s after        |
+| ------- | ------------------- | ------------------- | ------------------- | ------------------ |
+| hello   | 0.176, 0.185, 0.179 | 0.181, 0.178, 0.179 | 15976, 14746, 15308 | 18091, 16676, 17050 |
+| invoke  | 0.290, 0.293        | 0.266, 0.258, 0.382 | 8730, 8814          | 9378, 9328, 9388   |
+
+The gain is in CPU, not in latency: about 6 microseconds per request at 64
+connections on hello. A timer_settime still costs about 4 microseconds on
+this VM (gdb samples below). A request to `/api/stats` takes 8 turns, so 16
+timer_settime, and 1 timer_create and 1 timer_delete.
+
+## Where the worker thread spends its time
+
+No sampling profiler works on this VM: perf_event_paranoid is 2 and cannot
+be changed. So the profiles below come from gdb: 120 stacks of thread
+`embed-js-0`, one every 0.65 s, while oha runs 64 connections. JIT frames do
+not unwind, so the JavaScript shows as `??`. The counts are samples out of
+120.
+
+`/api/stats`, after fix 1:
+
+| samples | where                                                          |
+| ------- | -------------------------------------------------------------- |
+| 22      | `timer_settime`, the CPU limit                                 |
+| 4       | `timer_create`, the CPU limit                                  |
+| 19      | `sqlite3_step`, of which 16 in `fcntl`, the locks of SQLite    |
+| 25      | the commands, inclusive: SQLite and the serialization to JSON  |
+| 15      | `drain_and_process`, the callbacks of the event loop           |
+| 7       | `url_parse_v8`, `new URL` parsed in Rust                       |
+| 10      | JavaScript that does not unwind                                |
+
+## The asset lookup before each request
+
+`Embed::fetch` looks for a file before it runs the worker. `Assets::get`
+tries up to three names (`api/stats`, `api/stats.html`,
+`api/stats/index.html`) with `tokio::fs::read`. tokio sends each one to a
+blocking thread and back. strace counts per request to `/api/stats`: 3
+openat that fail, and 14 futex instead of 2.
+
+### Fix 2: a stat on the thread of the request
+
+`src/assets.rs`: a `std::fs::metadata` on the thread of the request answers a
+miss. Only a file that exists is read with `tokio::fs`. A rebuilt bundle
+still shows up without a restart.
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before     | req/s after      |
+| ------------ | ------------------- | ------------------- | ---------------- | ---------------- |
+| `/api/stats` | 0.955, 0.954, 0.874 | 0.763, 0.774, 0.766 | 2545, 2539, 2831 | 3130, 2909, 3107 |
+| `/`          | 1.149, 1.202, 1.222 | 1.038, 1.166, 1.123 | 1519, 1441, 1419 | 1483, 1419, 1487 |
+
+Three misses cost about 160 microseconds at 1 connection. Page `/` has one
+miss (`index.html`).
+
+## SQLite takes a lock for each statement (bench only)
+
+This is not a cost of Embed. It is a difference between the bench servers.
+strace counts no fcntl per request in the Node server, and 12 in the Embed
+server (4 fcntl, 2 stat and 1 pread per statement). A short Node script that
+runs one prepared statement in a loop makes the same 4 fcntl per run. In
+the server, a statement stays open after it ran, so SQLite keeps its read
+lock between requests.
+
+`examples/bench_server.rs` now sets `PRAGMA locking_mode = EXCLUSIVE` on its
+read-only connection. It holds the read lock the same way.
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before     | req/s after      |
+| ------------ | ------------------- | ------------------- | ---------------- | ---------------- |
+| `/api/stats` | 0.763, 0.774, 0.766 | 0.722, 0.739, 0.786 | 3130, 2909, 3107 | 2862, 3198, 2942 |
+| `/`          | 1.038, 1.166, 1.123 | 1.043, 1.077, 1.071 | 1483, 1419, 1487 | 1549, 1492, 1615 |
+
+The effect is within the noise: about 20 microseconds at 1 connection.
+
+## The event loop round trip of `platform.invoke`
+
+Before, each `invoke` went: `__nativeBindingInvoke` sends a message to the
+event loop task. That task spawns a task for the call. The call answers on
+the callback channel and notifies the event loop of the request, which
+settles the promise in a new turn. So 3 commands in a row cost 3 turns more,
+and each turn costs the V8 locker, the turn guard and 2 timer_settime.
+
+### Fix 3: settle the promise in the call (runtime)
+
+`openworkers-runtime-v8`, `src/runtime/bindings/fetch.rs`.
+`__nativeBindingInvoke` polls the call to the host once. If it is ready, the
+promise settles there. A call that waits goes on in the event loop as
+before. A command of `command_sync` is always ready at once.
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before     | req/s after        |
+| ------------ | ------------------- | ------------------- | ---------------- | ------------------ |
+| invoke       | 0.266, 0.258, 0.382 | 0.189, 0.198, 0.222 | 9378, 9328, 9388 | 15211, 13501, 13710 |
+| `/api/stats` | 0.722, 0.739, 0.786 | 0.673, 0.686, 0.699 | 2862, 3198, 2942 | 4549, 4392, 4332   |
+| `/`          | 1.043, 1.077, 1.071 | 0.980, 0.965, 0.985 | 1549, 1492, 1615 | 1929, 2040, 1903   |
+
+At 64 connections Embed now passes Node on this VM: 4420 against 3950
+req/s on `/api/stats`, 1960 against 1480 on `/`. At 1 connection it is
+still far behind: 0.69 ms against 0.25 ms on `/api/stats`.
+
+## CPU per request at 1 connection
+
+The CPU time of each thread, from `/proc/<pid>/task/*/stat`, over 20000
+requests to `/api/stats` at 1 connection, after fix 3:
+
+| thread                 | Embed (us/req) | Node (us/req) |
+| ---------------------- | -------------- | ------------- |
+| JavaScript thread      | 424            | 318           |
+| Axum workers, 2        | 155            | -             |
+| other threads          | about 10       | 38            |
+| total                  | 590            | 356           |
+
+At 64 connections the JavaScript thread of Embed spends 226 microseconds per
+request (1 / 4420 req/s), less than all of Node (253). At 1 connection it
+spends 424. Each thread sleeps between two requests, and each request wakes
+three threads in Embed: an Axum worker, the JavaScript thread, then the Axum
+worker again. Node wakes one.
