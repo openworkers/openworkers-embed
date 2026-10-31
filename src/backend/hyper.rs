@@ -31,7 +31,7 @@ where
         "http",
     );
 
-    match embed.fetch(request).await {
+    match embed.fetch_at(request, parts.uri.path()).await {
         Ok(response) => response.into_hyper(),
         Err(error) => text(502, &error.to_string()).into_hyper(),
     }

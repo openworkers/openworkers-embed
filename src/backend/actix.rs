@@ -19,7 +19,12 @@ pub async fn handle(
     request: ActixRequest,
     body: web::Bytes,
 ) -> ActixResponse {
-    match embed.fetch(HttpRequest::from_actix(&request, body)).await {
+    let path = request.path().to_string();
+
+    match embed
+        .fetch_at(HttpRequest::from_actix(&request, body), &path)
+        .await
+    {
         Ok(response) => response.into(),
         Err(error) => text(502, &error.to_string()).into(),
     }

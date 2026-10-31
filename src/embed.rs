@@ -93,7 +93,20 @@ impl Embed {
     }
 
     pub async fn fetch(&self, request: HttpRequest) -> Result<HttpResponse, EmbedError> {
-        if let Some(response) = self.asset(&request).await {
+        let path = url::path(&request.url).to_string();
+
+        self.fetch_at(request, &path).await
+    }
+
+    /// [`fetch`](Self::fetch), with the path of the request as the server read
+    /// it. The URL of the request holds the Host header of the client, which
+    /// can hold a `/`, so the path is not taken from it.
+    pub(crate) async fn fetch_at(
+        &self,
+        request: HttpRequest,
+        path: &str,
+    ) -> Result<HttpResponse, EmbedError> {
+        if let Some(response) = self.asset(&request, path).await {
             return Ok(response);
         }
 
@@ -103,7 +116,7 @@ impl Embed {
     }
 
     /// The file a GET or HEAD request names, if the assets directory has it.
-    async fn asset(&self, request: &HttpRequest) -> Option<HttpResponse> {
+    async fn asset(&self, request: &HttpRequest, path: &str) -> Option<HttpResponse> {
         let assets = self.host.assets.as_ref()?;
 
         let head = match request.method {
@@ -112,7 +125,7 @@ impl Embed {
             _ => return None,
         };
 
-        let mut response = assets.get(url::path(&request.url)).await?.into_http();
+        let mut response = assets.get(path).await?.into_http();
 
         if head {
             response.body = ResponseBody::None;
