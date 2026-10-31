@@ -48,7 +48,20 @@ The JavaScript engine is a feature. Exactly one is active; V8 is the default.
 | ------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v8`    | V8             | Isolates stay warm in a pool. Serves every binding `embed` uses.                                                                                                                    |
 | `nova`  | Nova           | A worker per request. Serves `Assets` and `Invoke`. It has no global `fetch`.                                                                                                       |
-| `jsc`   | JavaScriptCore | A worker per request, on the system framework of macOS. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
+| `jsc`   | JavaScriptCore | Warm workers per thread, on openworkers-jsc (the system framework of macOS, or with the `openworkers-runtime-jsc/static` feature the static JavaScriptCore of oven-sh), reset between requests, under a CPU budget per request. The watchdog of JavaScriptCore does not cut native code such as a regular expression that backtracks. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
+
+On macOS, the system JavaScriptCore runs JavaScript without its JIT unless the binary has the `com.apple.security.cs.allow-jit` entitlement: page `/` of the bench is about 5 times slower without it. To sign a binary with it:
+
+```bash
+cat > jit.entitlements <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>
+PLIST
+codesign -s - --entitlements jit.entitlements -o runtime --force target/release/your-binary
+```
+
+With the JIT, the CPU limit cuts JIT code only with polling traps. The jsc engine turns them on when the Embed is built, before its worker threads start; the build fails if JavaScriptCore already started without them. The option goes through the environment, so build the Embed early, before other threads start, or call `openworkers_runtime_jsc::init_jsc` with `polling_traps` yourself before then. Measured on page `/` of the bench (Apple M2, one thread): 382 us at 1 connection with the JIT, 2.1 ms without, against 333 us with V8.
 
 ```bash
 cargo test --no-default-features --features nova,axum
@@ -79,8 +92,8 @@ With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile tim
 ## Limits
 
 - A file of `assets(dir)` is read to the end before it is sent.
-- The worker code is trusted. On v8 there is no wall-clock limit, so a stream may live as long as its client reads it. The CPU and memory limits are the defaults of the runtime.
+- The worker code is trusted. On v8 there is no wall-clock limit, so a stream may live as long as its client reads it. On jsc the wall clock is the default of the runtime, 30 s, so a stream stops after 30 s. The CPU and memory limits are the defaults of the runtime.
 - One worker per `Embed`. Replacing the code means building a new `Embed`.
 - On v8, one thread runs 8 requests at the same time, one per place: an isolate with its one context. A ninth request waits for a place. A stream keeps its place until the client has read it, so 8 open streams fill a thread.
 - A request goes to the thread with the fewest requests in flight.
-- On v8, a context is never retired. It keeps its globals for the life of the process.
+- A context is never retired, on v8 and on jsc. It keeps its globals for the life of the process.

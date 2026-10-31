@@ -23,12 +23,16 @@ const _: () = assert!(
     "JavaScript engines are mutually exclusive: select one of v8|nova|jsc"
 );
 
-#[cfg(any(feature = "nova", feature = "jsc"))]
+#[cfg(feature = "jsc")]
+mod jsc_warm;
+#[cfg(feature = "nova")]
 mod per_request;
 #[cfg(feature = "v8")]
 mod warm;
 
-#[cfg(any(feature = "nova", feature = "jsc"))]
+#[cfg(feature = "jsc")]
+pub(crate) use jsc_warm::{fetch, init, on_park};
+#[cfg(feature = "nova")]
 pub(crate) use per_request::{fetch, init, on_park};
 #[cfg(feature = "v8")]
 pub(crate) use warm::{fetch, init, on_park};
