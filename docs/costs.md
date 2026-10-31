@@ -295,3 +295,64 @@ bench app. So each request copied 126 KB, and allocated and freed it.
 | hello        | 0.111, 0.113, 0.116 | 0.111, 0.110, 0.108 | 18664, 16600, 15885 | 18077, 17990, 18424 |
 
 The hello worker is small, so its copy cost little.
+
+## Inside the worker, per phase
+
+A temporary instrumentation (not committed) timed each phase of a request on
+the worker thread, in mode `SERVE=workers`, at 1 connection, with the CPU
+limit off. In microseconds per request:
+
+| phase                                  | hello | `/api/stats` |
+| -------------------------------------- | ----- | ------------ |
+| Axum handler, whole                    | 61    | 238          |
+| `take` and `reset` of the context      | 8.1   | 11.9         |
+| trigger: Request, listener, the calls  | 24.7  | 176          |
+| first turn of the event loop           | 3.9   | 10.9         |
+| read of the response                   | 9.7   | 12.6         |
+| wait for the streams                   | 2.7   | 2.8          |
+| `drain_waituntil`                      | 2.3   | 2.4          |
+
+The CPU limit adds about 11 microseconds to hello: 9 in `exec`, 2 in
+`drain_waituntil`.
+
+A few JavaScript operations, timed in a loop inside each server, in
+microseconds each:
+
+| operation              | Embed | Node | Bun  |
+| ---------------------- | ----- | ---- | ---- |
+| `new URL`              | 2.85  | 1.07 | 0.27 |
+| `new URL(request.url)` | 3.75  | 1.16 | 0.24 |
+| `new Headers` (4)      | 0.90  | 1.99 | 0.63 |
+| `new Request`          | 4.30  | 3.75 | 1.23 |
+| `new Response(str)`    | 2.90  | 5.93 | 0.30 |
+| `Response.json`        | 2.15  | 6.38 | 0.72 |
+
+`URL` is the slow one. Its parser is Rust (`url_parse_v8`), and each parse
+builds 11 Rust strings and an object of 11 properties through serde_v8. The
+JavaScript of `URL` is in openworkers-wintertc.
+
+### Fix 6: reset calls a function (runtime)
+
+`openworkers-runtime-v8`, `src/execution_context.rs`. `reset` evaluated a
+script on each request: a string, a compile that hits the cache, a run. The
+context now compiles the same code once, as a function, and calls it.
+`take` and `reset`: 8.1 to 3.4 microseconds on hello, 12 to 5.6 on
+`/api/stats`.
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before        | req/s after         |
+| ------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+| `/api/stats` | 0.339, 0.346, 0.330 | 0.331, 0.308, 0.304 | 5047, 5073, 4958    | 5095, 5343, 5365    |
+| `/`          | 0.698, 0.642, 0.660 | 0.696, 0.659, 0.649 | 2097, 2041, 2063    | 2189, 2207, 2146    |
+| hello        | 0.111, 0.110, 0.108 | 0.105, 0.107, 0.108 | 18077, 17990, 18424 | 18265, 18352, 16459 |
+
+### Fix 7: remember the misses of the asset lookup
+
+`src/assets.rs`. Each thread remembers for one second the paths that name
+no file. A file that a rebuild adds shows up within a second. Without assets
+at all, `/api/stats` took 0.317, 0.320 and 0.332 ms: the lookup cost about
+15 microseconds.
+
+| case         | p50 before (ms)     | p50 after (ms)      | req/s before     | req/s after      |
+| ------------ | ------------------- | ------------------- | ---------------- | ---------------- |
+| `/api/stats` | 0.331, 0.308, 0.304 | 0.298, 0.312, 0.276 | 5095, 5343, 5365 | 5277, 5293, 5301 |
+| `/`          | 0.696, 0.659, 0.649 | 0.640, 0.633, 0.654 | 2189, 2207, 2146 | 2176, 2191, 2038 |

@@ -1,11 +1,53 @@
 //! Static files served from a directory, read on every request so a rebuilt
-//! bundle shows up without a restart.
+//! bundle shows up without a restart. A path that names no file is
+//! remembered for a second, so a new file shows up within a second.
 
 use bytes::Bytes;
 use openworkers_core::{HttpResponse, ResponseBody};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
+/// How long a path that names no file is remembered. A file that a rebuild
+/// adds shows up after this.
+const MISS_TTL: Duration = Duration::from_secs(1);
+
+/// The misses a thread remembers at most, so that a scan of random paths
+/// cannot grow the set.
+const MAX_MISSES: usize = 4096;
+
+static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// Most requests name no file, and a miss costs up to three stat calls.
+    /// Each thread remembers its misses, by directory and path.
+    static MISSES: RefCell<Misses> = RefCell::new(Misses {
+        since: Instant::now(),
+        paths: HashSet::new(),
+    });
+}
+
+struct Misses {
+    since: Instant,
+    paths: HashSet<(usize, String)>,
+}
+
+impl Misses {
+    /// Forgets every miss once they are older than `MISS_TTL`.
+    fn fresh(&mut self) -> &mut HashSet<(usize, String)> {
+        if self.since.elapsed() > MISS_TTL || self.paths.len() >= MAX_MISSES {
+            self.paths.clear();
+            self.since = Instant::now();
+        }
+
+        &mut self.paths
+    }
+}
 
 pub(crate) struct Assets {
+    id: usize,
     root: PathBuf,
 }
 
@@ -33,12 +75,31 @@ impl Asset {
 
 impl Assets {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            root,
+        }
     }
 
     /// The file for a URL path: the exact file, then a prerendered page
     /// (`/about` is `about.html` or `about/index.html`).
     pub async fn get(&self, path: &str) -> Option<Asset> {
+        let key = (self.id, path.to_string());
+
+        if MISSES.with(|misses| misses.borrow_mut().fresh().contains(&key)) {
+            return None;
+        }
+
+        let asset = self.find(path).await;
+
+        if asset.is_none() {
+            MISSES.with(|misses| misses.borrow_mut().fresh().insert(key));
+        }
+
+        asset
+    }
+
+    async fn find(&self, path: &str) -> Option<Asset> {
         let path = path.trim_start_matches('/');
 
         let candidates = if path.is_empty() {
@@ -126,6 +187,20 @@ mod tests {
         assert!(!is_plain("../secret"));
         assert!(!is_plain("a/../../secret"));
         assert!(!is_plain("a\\b"));
+    }
+
+    #[tokio::test]
+    async fn a_miss_is_remembered_for_a_second() {
+        let root = tempfile::tempdir().unwrap();
+        let assets = Assets::new(root.path().to_path_buf());
+
+        assert!(assets.get("/new.txt").await.is_none());
+
+        std::fs::write(root.path().join("new.txt"), "here").unwrap();
+        assert!(assets.get("/new.txt").await.is_none());
+
+        tokio::time::sleep(MISS_TTL + Duration::from_millis(100)).await;
+        assert!(assets.get("/new.txt").await.is_some());
     }
 
     #[test]
