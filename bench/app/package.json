@@ -1,0 +1,17 @@
+{
+  "name": "embed-bench-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && ADAPTER=node vite build"
+  },
+  "devDependencies": {
+    "@openworkers/adapter-sveltekit": "^0.6.2",
+    "@sveltejs/adapter-node": "*",
+    "@sveltejs/kit": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "svelte": "^5.57.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.12"
+  }
+}
