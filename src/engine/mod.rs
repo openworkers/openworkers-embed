@@ -123,6 +123,10 @@ async fn relay_chunks<F>(
 ) where
     F: Future<Output = Result<(), TerminationReason>>,
 {
+    let mut relay = Relay {
+        sender: relay,
+        whole: false,
+    };
     let mut ended = false;
 
     loop {
@@ -131,16 +135,18 @@ async fn relay_chunks<F>(
                 ended = true;
 
                 if let Err(reason) = result {
-                    let _ = relay.send(Err(format!("the worker was stopped: {reason:?}"))).await;
+                    relay.whole = true;
+                    let _ = relay.sender.send(Err(format!("the worker was stopped: {reason:?}"))).await;
 
                     return;
                 }
             }
             chunk = chunks.recv() => match chunk {
                 Some(chunk) => {
-                    if relay.send(chunk).await.is_err() {
+                    if relay.sender.send(chunk).await.is_err() {
                         // The client is gone. The worker finishes, as in the runner:
                         // it may still have work to do after its body
+                        relay.whole = true;
                         drop(chunks);
 
                         if !ended {
@@ -151,6 +157,8 @@ async fn relay_chunks<F>(
                     }
                 }
                 None => {
+                    relay.whole = true;
+
                     if !ended {
                         let _ = execution.await;
                     }
@@ -159,5 +167,73 @@ async fn relay_chunks<F>(
                 }
             },
         }
+    }
+}
+
+/// The sender of a relayed body. Dropped before the body is whole, as when
+/// the relay panics, it ends the body with an error: a plain end would tell
+/// the client that the body is whole.
+///
+/// Known limit: when the channel is full (16 pieces), the error goes from a
+/// new task, which does not run if the runtime is dropping; the client then
+/// sees a plain end.
+struct Relay {
+    sender: mpsc::Sender<Result<Bytes, String>>,
+    whole: bool,
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        if self.whole {
+            return;
+        }
+
+        let error = Err("the worker stopped while it streamed its body".to_string());
+
+        // A task would not run if the runtime is dropping: try at once first
+        let Err(mpsc::error::TrySendError::Full(error)) = self.sender.try_send(error) else {
+            return;
+        };
+
+        let sender = self.sender.clone();
+
+        tokio::spawn(async move {
+            let _ = sender.send(error).await;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relay_chunks;
+    use bytes::Bytes;
+    use openworkers_core::TerminationReason;
+    use tokio::sync::{mpsc, oneshot};
+
+    // A relay that panics after a first piece ends the body with an error
+    #[tokio::test]
+    async fn a_relay_that_panics_ends_the_body_with_an_error() {
+        let (chunks_tx, chunks) = mpsc::channel(4);
+        let (relay, mut body) = mpsc::channel(4);
+        let (go, panic_now) = oneshot::channel::<()>();
+        let execution = Box::pin(async move {
+            let _ = panic_now.await;
+
+            panic!("the engine panics");
+
+            #[allow(unreachable_code)]
+            Ok::<(), TerminationReason>(())
+        });
+
+        tokio::spawn(relay_chunks(execution, chunks, relay));
+        chunks_tx.send(Ok(Bytes::from("first"))).await.unwrap();
+
+        assert_eq!(body.recv().await.unwrap().unwrap(), "first");
+
+        let _ = go.send(());
+
+        assert!(matches!(body.recv().await, Some(Err(_))));
+
+        drop(chunks_tx);
     }
 }
