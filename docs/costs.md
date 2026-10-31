@@ -32,16 +32,21 @@ microseconds behind at 1 connection. Bun stays far ahead.
 The costs per request at one thread, ranked by what their fix gained on
 `/api/stats` at 1 connection:
 
-| rank | cost                                              | gain at 1 conn  | gain at 64 conn | fix |
-| ---- | ------------------------------------------------- | --------------- | --------------- | --- |
-| 1    | three threads to wake: Axum, worker, Axum         | 310 us          | +6 %            | 4   |
-| 2    | asset misses through `tokio::fs`, 3 per request   | 150 us          | +10 %           | 2   |
-| 3    | an event loop round trip per `invoke`             | 50 us           | +47 %           | 3   |
-| 4    | a copy of the 126 KB script per request           | 27 us           | +6 %            | 5   |
-| 5    | the asset misses that are left, 3 stat            | 20 us           | +1 %            | 7   |
-| 6    | the CPU limit on Linux, 4 syscalls per turn       | 0 to 10 us      | +13 % on hello  | 1   |
-| 7    | `reset` evaluates a script per request            | 6 us            | +5 %            | 6   |
-| -    | SQLite locks per statement (bench only)           | 20 us           | 0 %             | -   |
+| rank | cost                                              | gain at 1 conn | gain at 64 conn | fix |
+| ---- | ------------------------------------------------- | -------------- | --------------- | --- |
+| 1    | three threads to wake: Axum, worker, Axum         | 321 us         | +7 %            | 4   |
+| 2    | asset misses through `tokio::fs`, 3 per request   | 160 us         | +16 %           | 2   |
+| 3    | an event loop round trip per `invoke`             | 63 us          | +47 %           | 3   |
+| 4    | a copy of the 126 KB script per request           | 27 us          | +6 %            | 5   |
+| 5    | `reset` evaluates a script per request            | 24 us (a)      | +5 %            | 6   |
+| 6    | the asset misses that are left, 3 stat            | 19 us          | 0 %             | 7   |
+| 7    | the CPU limit on Linux, 4 syscalls per turn       | within noise   | +13 % on hello  | 1   |
+| -    | SQLite locks per statement (bench only)           | 19 us          | 0 %             | -   |
+
+Each gain is the difference of the means of three runs, before and after
+the fix, from the tables below. (a) Timed inside the process, `reset` went
+from 8 to 3.4 microseconds on hello and from 12 to 5.6 on `/api/stats`: the
+p50 gain is larger than that, and partly noise.
 
 What is left, not fixed, in microseconds per request on this VM:
 
