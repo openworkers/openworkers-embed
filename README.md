@@ -38,7 +38,7 @@ export const load = async ({ platform }) => ({
 - A function that answers at once runs inside the turn of the worker's JavaScript: its time counts in the CPU limit of the request, 50 ms by default.
 - `assets(dir)` serves the files of `dir` for GET and HEAD requests, before the worker runs. The worker also reads them as `env.ASSETS`. Files are read on each request.
 - The `fetch` of the worker goes out over HTTP, with the client settings of the runner: a redirect is the answer and not a hop, a pause of 10 seconds from the server ends the call, and the body streams back. There is no egress filter, because the code is trusted. The `fetch` feature, on by default, brings `reqwest`.
-- A response of the worker streams out: `Embed::fetch` returns as soon as the worker has one, and the body follows while the worker keeps running. A client that drops the body ends the stream, and a worker that the runtime stops while its body streams ends the body with an error. nova drains a stream before it answers, so an endless stream never ends there.
+- A response of the worker streams out: `Embed::fetch` returns as soon as the worker has one, and the body follows while the worker keeps running. A client that drops the body ends the stream, and a worker that the runtime stops while its body streams ends the body with an error. nova and boa drain a stream before they answer, so an endless stream never ends there.
 
 ## Engines
 
@@ -48,6 +48,7 @@ The JavaScript engine is a feature. Exactly one is active; V8 is the default.
 | ------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v8`    | V8             | Isolates stay warm in a pool. Serves every binding `embed` uses.                                                                                                                    |
 | `nova`  | Nova           | A worker per request. Serves `Assets` and `Invoke`. It has no global `fetch`.                                                                                                       |
+| `boa`   | Boa            | A worker per request, which runs the whole bundle again for each request: page `/` of the bench takes 45 ms, against 0.34 ms on V8. Serves `Assets` and `Invoke`, and a global `fetch` that reads a reply to its end before the worker gets it. Boa has no CPU limit and cannot interrupt a running script: a loop that never ends keeps its worker thread for good. The wall clock, 30 s, ends a request only between two jobs. |
 | `jsc`   | JavaScriptCore | Warm workers per thread, on openworkers-jsc (the system framework of macOS, or with the `openworkers-runtime-jsc/static` feature the static JavaScriptCore of oven-sh), reset between requests, under a CPU budget per request. The watchdog of JavaScriptCore does not cut native code such as a regular expression that backtracks. Serves `Invoke` only, so `env.ASSETS` does not exist: the files of `assets(dir)` are served by Rust before the worker runs. |
 
 On macOS, the system JavaScriptCore runs JavaScript without its JIT unless the binary has the `com.apple.security.cs.allow-jit` entitlement: page `/` of the bench is about 5 times slower without it. To sign a binary with it:
@@ -65,6 +66,7 @@ With the JIT, the CPU limit cuts JIT code only with polling traps. The jsc engin
 
 ```bash
 cargo test --no-default-features --features nova,axum
+cargo test --no-default-features --features boa,fetch,axum
 ```
 
 ## Web frameworks
@@ -92,7 +94,7 @@ With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile tim
 ## Limits
 
 - A file of `assets(dir)` is read to the end before it is sent.
-- The worker code is trusted. On v8 there is no wall-clock limit, so a stream may live as long as its client reads it. On jsc the wall clock is the default of the runtime, 30 s, so a stream stops after 30 s. The CPU and memory limits are the defaults of the runtime.
+- The worker code is trusted. On v8 there is no wall-clock limit, so a stream may live as long as its client reads it. On jsc the wall clock is the default of the runtime, 30 s, so a stream stops after 30 s. On boa nothing cuts a script that runs without end, at the top level or in a request: its thread stays busy for good. The CPU and memory limits are the defaults of the runtime.
 - One worker per `Embed`. Replacing the code means building a new `Embed`.
 - On v8, one thread runs 8 requests at the same time, one per place: an isolate with its one context. A ninth request waits for a place. A stream keeps its place until the client has read it, so 8 open streams fill a thread.
 - A request goes to the thread with the fewest requests in flight.

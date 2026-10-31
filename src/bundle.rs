@@ -2,10 +2,10 @@ use crate::EmbedError;
 use openworkers_core::{BindingInfo, Script};
 use openworkers_transform::{CodeLanguage, parse_worker_code};
 
-/// jsc dispatches to `addEventListener('fetch')` only, so a default export needs
-/// wiring to it.
-#[cfg(feature = "jsc")]
-const DEFAULT_EXPORT_BRIDGE: &str = include_str!("jsc_bridge.js");
+/// jsc and boa dispatch to `addEventListener('fetch')` only, so a default
+/// export needs wiring to it.
+#[cfg(any(feature = "jsc", feature = "boa"))]
+const DEFAULT_EXPORT_BRIDGE: &str = include_str!("default_export_bridge.js");
 
 /// A worker ready to run.
 #[derive(Clone)]
@@ -19,7 +19,7 @@ impl Bundle {
         let code = parse_worker_code(code.as_bytes(), CodeLanguage::JavaScript)
             .map_err(EmbedError::Code)?;
 
-        #[cfg(feature = "jsc")]
+        #[cfg(any(feature = "jsc", feature = "boa"))]
         let code = format!("{code}\n{DEFAULT_EXPORT_BRIDGE}");
 
         Ok(Self {

@@ -1,5 +1,5 @@
-//! nova: a worker per request, as the runner does for every engine without
-//! a pool of its own.
+//! nova and boa: a worker per request, as the runner does for every engine
+//! without a pool of its own.
 
 use super::respond;
 use crate::EmbedError;
@@ -7,6 +7,9 @@ use crate::bundle::Bundle;
 use crate::pool::Gone;
 use openworkers_core::{Event, HttpRequest, HttpResponse, OperationsHandle, TerminationReason};
 
+#[cfg(feature = "boa")]
+use openworkers_runtime_boa::Worker;
+#[cfg(feature = "nova")]
 use openworkers_runtime_nova::Worker;
 
 pub(crate) fn init() -> Result<(), EmbedError> {

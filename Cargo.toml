@@ -12,6 +12,7 @@ default = ["v8", "fetch"]
 v8 = ["dep:openworkers-runtime-v8"]
 nova = ["dep:openworkers-runtime-nova"]
 jsc = ["dep:openworkers-runtime-jsc"]
+boa = ["dep:openworkers-runtime-boa"]
 
 # The `fetch` of the worker, answered over HTTP as the runner answers it
 fetch = ["dep:reqwest", "dep:futures-util"]
@@ -30,6 +31,8 @@ openworkers-runtime-v8 = { git = "https://github.com/openworkers/openworkers-run
 openworkers-runtime-nova = { git = "https://github.com/openworkers/openworkers-runtime-nova", tag = "v0.18.2", features = ["invoke"], optional = true }
 # Past v0.18.1: openworkers-jsc, CPU budget per request, reset between events
 openworkers-runtime-jsc = { git = "https://github.com/openworkers/openworkers-runtime-jsc", rev = "1c8a09eee9cc3b42a34bb8498551a5ef705803b5", features = ["invoke"], optional = true }
+# Past v0.18.0: assets and invoke bindings, body read as bytes, deadline per job
+openworkers-runtime-boa = { git = "https://github.com/openworkers/openworkers-runtime-boa", rev = "70bff261b34053660f85901a4d4e33112f3e7c59", features = ["invoke"], optional = true }
 
 actix-web = { version = "4", optional = true }
 axum = { version = "0.8", optional = true }

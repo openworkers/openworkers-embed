@@ -1,4 +1,4 @@
-//! The JavaScript engine of this build: one of v8, nova or jsc, chosen by a
+//! The JavaScript engine of this build: one of v8, nova, jsc or boa, chosen by a
 //! feature the way the runner chooses. An engine answers two questions: how to
 //! run one request on a worker thread, and which binding types it serves.
 
@@ -9,36 +9,37 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot};
 
-#[cfg(not(any(feature = "v8", feature = "nova", feature = "jsc")))]
-compile_error!("no JavaScript engine selected: build with --features v8|nova|jsc");
+#[cfg(not(any(feature = "v8", feature = "nova", feature = "jsc", feature = "boa")))]
+compile_error!("no JavaScript engine selected: build with --features v8|nova|jsc|boa");
 
 /// Engines this build carries. None selected is left to the `compile_error!`
 /// above, which fires before name resolution and so reports alone.
 const ENGINES: usize = cfg!(feature = "v8") as usize
     + cfg!(feature = "nova") as usize
-    + cfg!(feature = "jsc") as usize;
+    + cfg!(feature = "jsc") as usize
+    + cfg!(feature = "boa") as usize;
 
 const _: () = assert!(
     ENGINES <= 1,
-    "JavaScript engines are mutually exclusive: select one of v8|nova|jsc"
+    "JavaScript engines are mutually exclusive: select one of v8|nova|jsc|boa"
 );
 
 #[cfg(feature = "jsc")]
 mod jsc_warm;
-#[cfg(feature = "nova")]
+#[cfg(any(feature = "nova", feature = "boa"))]
 mod per_request;
 #[cfg(feature = "v8")]
 mod warm;
 
 #[cfg(feature = "jsc")]
 pub(crate) use jsc_warm::{fetch, init, on_park};
-#[cfg(feature = "nova")]
+#[cfg(any(feature = "nova", feature = "boa"))]
 pub(crate) use per_request::{fetch, init, on_park};
 #[cfg(feature = "v8")]
 pub(crate) use warm::{fetch, init, on_park};
 
 /// Binding types the engine serves: v8 builds an `env` object per binding,
-/// while nova and jsc list what they serve themselves.
+/// while nova, jsc and boa list what they serve themselves.
 #[cfg(feature = "v8")]
 const SUPPORTED: &[BindingType] = &[
     BindingType::Assets,
@@ -54,6 +55,8 @@ const SUPPORTED: &[BindingType] = &[
 const SUPPORTED: &[BindingType] = openworkers_runtime_nova::SUPPORTED_BINDINGS;
 #[cfg(feature = "jsc")]
 const SUPPORTED: &[BindingType] = openworkers_runtime_jsc::SUPPORTED_BINDINGS;
+#[cfg(feature = "boa")]
+const SUPPORTED: &[BindingType] = openworkers_runtime_boa::SUPPORTED_BINDINGS;
 
 pub(crate) fn supports(binding_type: BindingType) -> bool {
     SUPPORTED.contains(&binding_type)

@@ -234,8 +234,8 @@ async fn the_host_is_on_env_and_not_a_global() {
 // A worker answers with a stream: the response is handed over as soon as the
 // worker has one, and the rest comes while the worker keeps running.
 
-// nova drains a stream before it answers
-#[cfg(not(feature = "nova"))]
+// nova and boa drain a stream before they answer
+#[cfg(not(any(feature = "nova", feature = "boa")))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_response_streams_out_while_the_worker_runs() {
     let release = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -327,8 +327,9 @@ async fn a_long_stream_arrives_whole() {
     assert_eq!(body.len(), 500);
 }
 
-// nova drains a stream before it answers, and an endless one never ends
-#[cfg(not(feature = "nova"))]
+// nova and boa drain a stream before they answer, and an endless one never
+// ends
+#[cfg(not(any(feature = "nova", feature = "boa")))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dropped_response_does_not_block_the_next_request() {
     let worker = "export default {
