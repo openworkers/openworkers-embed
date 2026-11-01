@@ -155,7 +155,7 @@ async fn with_no_host_header_the_url_takes_the_authority() {
 }
 
 // The Host header goes into the URL: one with a path, a query, a userinfo,
-// nothing or a bad port is refused before the worker
+// nothing, a bad port or a number that is not IPv4 is refused before the worker
 #[tokio::test]
 async fn a_bad_host_is_refused() {
     let router = router(Embed::builder(CLIENT).threads(1).build().unwrap());
@@ -166,6 +166,8 @@ async fn a_bad_host_is_refused() {
         "user@evil.example",
         "",
         "app.test:99999",
+        "1.2.3.4.5",
+        "256.1.1.1",
     ] {
         let request = Request::get("/x")
             .header("host", host)

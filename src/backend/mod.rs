@@ -70,7 +70,8 @@ pub(crate) fn checked_authority(value: &str) -> Option<&str> {
     let named = !host.is_empty()
         && host
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        && (!ends_in_number(host) || host.parse::<std::net::Ipv4Addr>().is_ok());
     let ipv6 = host
         .strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
@@ -81,6 +82,21 @@ pub(crate) fn checked_authority(value: &str) -> Option<&str> {
     };
 
     ((named || ipv6) && whole).then_some(value)
+}
+
+/// Whether the URL parser of the worker (WHATWG) reads `host` as an IPv4
+/// address: its last label, after one trailing dot, is all digits or starts
+/// with `0x`. Such a host that is not an IPv4 address (`1.2.3.4.5`,
+/// `256.1.1.1`) makes `new URL` throw in the worker.
+#[cfg(any(feature = "actix", feature = "hyper"))]
+fn ends_in_number(host: &str) -> bool {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let last = host.rsplit('.').next().unwrap_or(host);
+
+    (!last.is_empty() && last.bytes().all(|b| b.is_ascii_digit()))
+        || last
+            .get(..2)
+            .is_some_and(|start| start.eq_ignore_ascii_case("0x"))
 }
 
 /// The headers that only the runner sets, as `RUNNER_HEADERS` of
@@ -143,9 +159,12 @@ mod tests {
             "app.test",
             "app.test:8080",
             "127.0.0.1",
+            "127.0.0.1:3000",
             "[::1]",
             "[::1]:3000",
             "a_b-c",
+            "1.2.3.example",
+            "app0x.test",
         ] {
             assert_eq!(checked_authority(good), Some(good));
         }
@@ -165,6 +184,13 @@ mod tests {
             "a b",
             "[::1",
             "[app.test]",
+            "1.2.3.4.5",
+            "256.1.1.1",
+            "app.1",
+            "1.2.3.4.",
+            "127.1",
+            "app.0x10",
+            "0x7f.0.0.1",
         ] {
             assert_eq!(checked_authority(bad), None, "{bad:?}");
         }
