@@ -117,6 +117,8 @@ fn site() -> (tempfile::TempDir, Embed) {
     fs::write(assets.join("about.html"), "<h1>about</h1>").unwrap();
     fs::write(assets.join("_app/immutable/x.js"), "export {}").unwrap();
     fs::write(assets.join("_astro/page.Dx1.js"), "export {}").unwrap();
+    fs::create_dir_all(assets.join("a/b/_astro")).unwrap();
+    fs::write(assets.join("a/b/_astro/x.js"), "export {}").unwrap();
     fs::write(site.path().join("secret.txt"), "secret").unwrap();
 
     let worker = r#"
@@ -180,9 +182,13 @@ async fn hashed_files_are_cached_for_good() {
         );
     }
 
-    let response = embed.fetch(get("/a.txt")).await.unwrap();
+    // A plain file, and an _astro directory deeper than the root
+    for path in ["/a.txt", "/a/b/_astro/x.js"] {
+        let response = embed.fetch(get(path)).await.unwrap();
 
-    assert_eq!(header(&response, "cache-control"), None);
+        assert_eq!(response.status, 200, "{path}");
+        assert_eq!(header(&response, "cache-control"), None, "{path}");
+    }
 }
 
 #[tokio::test]

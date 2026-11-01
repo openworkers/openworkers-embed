@@ -234,12 +234,12 @@ fn walk(
     }
 }
 
-/// SvelteKit (`_app/immutable/`) and Astro (`_astro/`, under the base path
-/// if any) name these files by hash, so they never change.
+/// SvelteKit (`_app/immutable/`) and Astro (`_astro/`) name these files by
+/// hash, so they never change. Only at the root of the assets directory: a
+/// file deeper, or under a base path, gets no Cache-Control.
 fn immutable(path: &str) -> Option<&'static str> {
-    let astro = path.starts_with("_astro/") || path.contains("/_astro/");
-
-    (path.contains("_app/immutable/") || astro).then_some("public, max-age=31536000, immutable")
+    (path.starts_with("_app/immutable/") || path.starts_with("_astro/"))
+        .then_some("public, max-age=31536000, immutable")
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -531,9 +531,12 @@ mod tests {
     fn only_hashed_files_are_immutable() {
         assert!(immutable("_app/immutable/chunks/a.js").is_some());
         assert!(immutable("_astro/pixel.B-OjCZyu.png").is_some());
-        assert!(immutable("docs/_astro/index.Dx1.js").is_some());
         assert!(immutable("favicon.ico").is_none());
         assert!(immutable("my_astro/a.js").is_none());
         assert!(immutable("_astro.png").is_none());
+        assert!(immutable("a/b/_astro/x.js").is_none());
+        assert!(immutable("blog/notes/_astro/readme.txt").is_none());
+        assert!(immutable("my_app/immutable/a.js").is_none());
+        assert!(immutable("docs/_app/immutable/a.js").is_none());
     }
 }
