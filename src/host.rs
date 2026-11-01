@@ -15,6 +15,9 @@ const COMMAND_BINDING: &str = "EMBED";
 /// The name the adapter's worker reads static files from.
 const ASSETS_BINDING: &str = "ASSETS";
 
+/// The names of the bindings, which a variable cannot take.
+pub(crate) const BINDINGS: [&str; 2] = [COMMAND_BINDING, ASSETS_BINDING];
+
 /// What a worker reaches on the Rust side: commands, and the assets directory.
 pub(crate) struct Host {
     pub commands: Commands,

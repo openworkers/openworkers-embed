@@ -1,12 +1,13 @@
 use crate::assets::Assets;
 use crate::bundle::Bundle;
 use crate::commands::Commands;
-use crate::host::Host;
+use crate::host::{BINDINGS, Host};
 use crate::pool::WorkerPool;
 use crate::{EmbedError, url};
 use openworkers_core::{HttpMethod, HttpRequest, HttpResponse, OperationsHandle, ResponseBody};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ pub struct EmbedBuilder {
     code: String,
     commands: Commands,
     assets: Option<Arc<Assets>>,
+    vars: HashMap<String, String>,
     threads: usize,
 }
 
@@ -58,6 +60,15 @@ impl EmbedBuilder {
         self.command(name, move |args| std::future::ready(function(args)))
     }
 
+    /// A text variable: the worker reads it as `env.<name>`, in the `env` of
+    /// `fetch` and in `globalThis.env` (where `astro:env` looks). A second call
+    /// with the same name replaces the value. The names of the bindings,
+    /// `EMBED` and `ASSETS`, are refused by [`build`](Self::build).
+    pub fn var(mut self, name: &str, value: &str) -> Self {
+        self.vars.insert(name.to_string(), value.to_string());
+        self
+    }
+
     /// The number of worker threads. The default is one per CPU.
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads.max(1);
@@ -70,8 +81,18 @@ impl EmbedBuilder {
             assets: self.assets,
         };
 
+        if let Some(name) = self
+            .vars
+            .keys()
+            .find(|name| BINDINGS.contains(&name.as_str()))
+        {
+            return Err(EmbedError::Setting(format!(
+                "the variable {name} has the name of a binding"
+            )));
+        }
+
         Ok(Embed {
-            bundle: Bundle::compile(&self.code, host.bindings())?,
+            bundle: Bundle::compile(&self.code, self.vars, host.bindings())?,
             host: Arc::new(host),
             pool: WorkerPool::start(self.threads)?,
         })
@@ -93,6 +114,7 @@ impl Embed {
             code: code.into(),
             commands: Commands::default(),
             assets: None,
+            vars: HashMap::new(),
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
         }
     }
