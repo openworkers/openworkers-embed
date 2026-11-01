@@ -123,3 +123,28 @@ async fn the_app_declares_the_scheme() {
         client_seen("https://app.test/x", Some("192.0.2.7"), "https")
     );
 }
+
+// HTTP/2 carries the host in :authority and actix adds no Host header: the
+// URL takes the authority, not the host of the server config
+#[actix_web::test]
+async fn with_no_host_header_the_url_takes_the_authority() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(embed))
+            .app_data(Scheme::Https)
+            .default_service(web::to(handle)),
+    )
+    .await;
+
+    let request = test::TestRequest::get()
+        .uri("https://app.test/x?q=1")
+        .to_request();
+
+    assert!(request.head().headers.get("host").is_none());
+
+    let body = test::read_body(test::call_service(&app, request).await).await;
+
+    assert_eq!(body, client_seen("https://app.test/x?q=1", None, "https"));
+}

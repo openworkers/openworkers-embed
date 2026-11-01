@@ -43,6 +43,20 @@ pub struct Connection {
     pub scheme: Scheme,
 }
 
+/// The URL the worker gets: the scheme the host trusts, the authority of the
+/// request and its path with the query. `from_hyper_parts` and `from_actix`
+/// of openworkers-core are not used for it: with no Host header (HTTP/2
+/// carries `:authority`), the first gives `localhost` and the whole URI, and
+/// the second reads the forwarded headers of the client.
+#[cfg(any(feature = "actix", feature = "hyper"))]
+pub(crate) fn url(scheme: Scheme, authority: &str, path_and_query: Option<&str>) -> String {
+    format!(
+        "{}://{authority}{}",
+        scheme.as_str(),
+        path_and_query.unwrap_or("/")
+    )
+}
+
 /// The headers that only the runner sets, as `RUNNER_HEADERS` of
 /// openworkers-runner: a request from a client loses them.
 #[cfg(any(feature = "actix", feature = "hyper"))]

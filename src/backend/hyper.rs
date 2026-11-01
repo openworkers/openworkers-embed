@@ -1,6 +1,6 @@
 //! Any hyper 1 server.
 
-use super::{Connection, set_client};
+use super::{Connection, set_client, url};
 use crate::Embed;
 use crate::response::text;
 use http_body_util::{BodyExt, Limited};
@@ -45,6 +45,20 @@ where
         &parts.headers,
         body.to_bytes(),
         connection.scheme.as_str(),
+    );
+
+    // The Host header, else the authority of the URI (HTTP/2)
+    let authority = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .or_else(|| parts.uri.authority().map(|authority| authority.as_str()))
+        .unwrap_or("localhost");
+
+    request.url = url(
+        connection.scheme,
+        authority,
+        parts.uri.path_and_query().map(|path| path.as_str()),
     );
 
     set_client(&mut request, connection);

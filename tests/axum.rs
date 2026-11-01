@@ -127,3 +127,20 @@ async fn router_with_sets_the_scheme() {
 
     assert_eq!(body, client_seen("https://app.test/x", None, "https"));
 }
+
+// HTTP/2 carries the host in :authority and sends no Host header: the URL
+// takes the authority, not localhost
+#[tokio::test]
+async fn with_no_host_header_the_url_takes_the_authority() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+    let request = Request::get("https://app.test/x?q=1")
+        .body(Body::empty())
+        .unwrap();
+    let response = router_with(embed, Scheme::Https)
+        .oneshot(request)
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(body, client_seen("https://app.test/x?q=1", None, "https"));
+}

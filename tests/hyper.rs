@@ -101,3 +101,22 @@ async fn the_host_sets_the_scheme() {
         client_seen("https://app.test/x", Some("192.0.2.7"), "https")
     );
 }
+
+// HTTP/2 carries the host in :authority and sends no Host header: the URL
+// takes the authority, not localhost
+#[tokio::test]
+async fn with_no_host_header_the_url_takes_the_authority() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+    let request = hyper::Request::get("https://app.test/x?q=1")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let connection = Connection {
+        peer: None,
+        scheme: Scheme::Https,
+    };
+
+    let response = handle_with(&embed, request, connection).await;
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(body, client_seen("https://app.test/x?q=1", None, "https"));
+}

@@ -1,6 +1,6 @@
 //! Actix Web.
 
-use super::{Connection, Scheme, set_client};
+use super::{Connection, Scheme, set_client, url};
 use crate::Embed;
 use crate::response::text;
 use actix_web::{HttpRequest as ActixRequest, HttpResponse as ActixResponse, web};
@@ -32,7 +32,25 @@ pub async fn handle(
     };
     let mut worker_request = HttpRequest::from_actix(&request, body);
 
-    worker_request.url = url(&request, connection.scheme.as_str());
+    // The Host header, else the authority of the URI (HTTP/2), else the host
+    // of the server config
+    let authority = request
+        .headers()
+        .get(actix_web::http::header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .or_else(|| {
+            request
+                .uri()
+                .authority()
+                .map(|authority| authority.as_str())
+        })
+        .unwrap_or_else(|| request.app_config().host());
+
+    worker_request.url = url(
+        connection.scheme,
+        authority,
+        request.uri().path_and_query().map(|path| path.as_str()),
+    );
 
     set_client(&mut worker_request, connection);
 
@@ -40,24 +58,6 @@ pub async fn handle(
         Ok(response) => response.into(),
         Err(error) => text(502, &error.to_string()).into(),
     }
-}
-
-/// The URL as the hyper backend makes it: the scheme of the server, the Host
-/// header (or the host of the server config) and the path with the query.
-/// `connection_info` of actix is not used: it reads the scheme and the host
-/// from the `Forwarded` and `X-Forwarded-*` headers of the client.
-fn url(request: &ActixRequest, scheme: &str) -> String {
-    let host = request
-        .headers()
-        .get(actix_web::http::header::HOST)
-        .and_then(|host| host.to_str().ok())
-        .unwrap_or_else(|| request.app_config().host());
-    let path = request
-        .uri()
-        .path_and_query()
-        .map_or("/", |path| path.as_str());
-
-    format!("{scheme}://{host}{path}")
 }
 
 /// `https` when the server ends TLS, else the scheme the app declares.
