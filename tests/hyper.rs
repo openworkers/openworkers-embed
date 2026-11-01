@@ -6,7 +6,8 @@ use bytes::Bytes;
 use common::{CLIENT, ECHO, RUNNER_HEADERS, client_seen};
 use http_body_util::{BodyExt, Full};
 use openworkers_embed::Embed;
-use openworkers_embed::backend::hyper::handle;
+use openworkers_embed::backend::hyper::{handle, handle_with};
+use openworkers_embed::backend::{Connection, Scheme};
 
 #[tokio::test]
 async fn a_hyper_request_reaches_the_worker_and_comes_back() {
@@ -18,7 +19,7 @@ async fn a_hyper_request_reaches_the_worker_and_comes_back() {
         .body(Full::new(Bytes::from("rock")))
         .unwrap();
 
-    let response = handle(&embed, request, "192.0.2.7:4000".parse().unwrap()).await;
+    let response = handle(&embed, request).await;
 
     assert_eq!(response.status(), 201);
     assert_eq!(response.headers()["x-echo"], "yes");
@@ -47,7 +48,11 @@ async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
             .body(Full::new(Bytes::new()))
             .unwrap();
 
-        let response = handle(&embed, request, peer.parse().unwrap()).await;
+        let connection = Connection {
+            peer: Some(peer.parse().unwrap()),
+            scheme: Scheme::Http,
+        };
+        let response = handle_with(&embed, request, connection).await;
         let body = response.into_body().collect().await.unwrap().to_bytes();
 
         assert_eq!(
@@ -56,4 +61,43 @@ async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
             "{peer}"
         );
     }
+}
+
+// handle knows no peer: the worker gets no address, not the client's
+#[tokio::test]
+async fn handle_gives_no_address() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+    let request = hyper::Request::get("/x")
+        .header("host", "app.test")
+        .header("x-forwarded-for", "6.6.6.6")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+
+    let response = handle(&embed, request).await;
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(body, client_seen("http://app.test/x", None, "http"));
+}
+
+// Behind a proxy that ends TLS, the host says https: the URL and
+// x-forwarded-proto carry it
+#[tokio::test]
+async fn the_host_sets_the_scheme() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+    let request = hyper::Request::get("/x")
+        .header("host", "app.test")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let connection = Connection {
+        peer: Some("192.0.2.7:4000".parse().unwrap()),
+        scheme: Scheme::Https,
+    };
+
+    let response = handle_with(&embed, request, connection).await;
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(
+        body,
+        client_seen("https://app.test/x", Some("192.0.2.7"), "https")
+    );
 }

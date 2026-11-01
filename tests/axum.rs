@@ -7,7 +7,8 @@ use axum::http::Request;
 use common::{CLIENT, ECHO, RUNNER_HEADERS, client_seen};
 use http_body_util::BodyExt;
 use openworkers_embed::Embed;
-use openworkers_embed::backend::axum::router;
+use openworkers_embed::backend::Scheme;
+use openworkers_embed::backend::axum::{router, router_with};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceExt;
@@ -107,4 +108,22 @@ async fn without_the_connect_info_the_worker_gets_no_address() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
 
     assert_eq!(body, client_seen("http://app.test/x", None, "http"));
+}
+
+// Behind a proxy that ends TLS, router_with says https
+#[tokio::test]
+async fn router_with_sets_the_scheme() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+    let request = Request::get("/x")
+        .header("host", "app.test")
+        .header("x-forwarded-proto", "http")
+        .body(Body::empty())
+        .unwrap();
+    let response = router_with(embed, Scheme::Https)
+        .oneshot(request)
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(body, client_seen("https://app.test/x", None, "https"));
 }

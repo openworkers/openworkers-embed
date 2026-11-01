@@ -5,6 +5,7 @@ mod common;
 use actix_web::{App, test, web};
 use common::{CLIENT, ECHO, RUNNER_HEADERS, client_seen};
 use openworkers_embed::Embed;
+use openworkers_embed::backend::Scheme;
 use openworkers_embed::backend::actix::handle;
 
 #[actix_web::test]
@@ -94,4 +95,31 @@ async fn the_url_comes_from_the_host_header_and_the_request_line() {
     let body = test::read_body(test::call_service(&app, request).await).await;
 
     assert_eq!(body, client_seen("http://app.test/page?q=1", None, "http"));
+}
+
+// Behind a proxy that ends TLS, the app declares https as app data
+#[actix_web::test]
+async fn the_app_declares_the_scheme() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(embed))
+            .app_data(Scheme::Https)
+            .default_service(web::to(handle)),
+    )
+    .await;
+
+    let request = test::TestRequest::get()
+        .uri("/x")
+        .insert_header(("host", "app.test"))
+        .peer_addr("192.0.2.7:4000".parse().unwrap())
+        .to_request();
+
+    let body = test::read_body(test::call_service(&app, request).await).await;
+
+    assert_eq!(
+        body,
+        client_seen("https://app.test/x", Some("192.0.2.7"), "https")
+    );
 }

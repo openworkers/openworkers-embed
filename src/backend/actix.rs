@@ -1,6 +1,6 @@
 //! Actix Web.
 
-use super::set_client;
+use super::{Connection, Scheme, set_client};
 use crate::Embed;
 use crate::response::text;
 use actix_web::{HttpRequest as ActixRequest, HttpResponse as ActixResponse, web};
@@ -14,8 +14,10 @@ use openworkers_core::HttpRequest;
 ///     .default_service(web::to(openworkers_embed::backend::actix::handle))
 /// ```
 ///
-/// The worker gets the address of the peer in `x-real-ip`, and the scheme of
-/// the server in `x-forwarded-proto`.
+/// The worker gets the address of the peer in `x-real-ip`, and the scheme in
+/// `x-forwarded-proto` and the URL: `https` when the server ends TLS itself,
+/// or when the app holds `Scheme::Https` as app data (behind a proxy that
+/// ends TLS: `App::new().app_data(Scheme::Https)`).
 ///
 /// Actix reads at most 256 KiB of body by default; raise it with `web::PayloadConfig`.
 pub async fn handle(
@@ -24,20 +26,15 @@ pub async fn handle(
     body: web::Bytes,
 ) -> ActixResponse {
     let path = request.path().to_string();
-    let scheme = if request.app_config().secure() {
-        "https"
-    } else {
-        "http"
+    let connection = Connection {
+        peer: request.peer_addr(),
+        scheme: scheme(request.app_config().secure(), request.app_data::<Scheme>()),
     };
     let mut worker_request = HttpRequest::from_actix(&request, body);
 
-    worker_request.url = url(&request, scheme);
+    worker_request.url = url(&request, connection.scheme.as_str());
 
-    set_client(
-        &mut worker_request,
-        request.peer_addr().map(|peer| peer.ip()),
-        scheme,
-    );
+    set_client(&mut worker_request, connection);
 
     match embed.fetch_at(worker_request, &path).await {
         Ok(response) => response.into(),
@@ -61,4 +58,28 @@ fn url(request: &ActixRequest, scheme: &str) -> String {
         .map_or("/", |path| path.as_str());
 
     format!("{scheme}://{host}{path}")
+}
+
+/// `https` when the server ends TLS, else the scheme the app declares.
+fn scheme(secure: bool, declared: Option<&Scheme>) -> Scheme {
+    if secure {
+        return Scheme::Https;
+    }
+
+    declared.copied().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Scheme, scheme};
+
+    // A test cannot make a secure actix server without TLS: the rule is tested
+    // on its own
+    #[test]
+    fn a_secure_server_is_https_whatever_the_app_declares() {
+        assert_eq!(scheme(true, None), Scheme::Https);
+        assert_eq!(scheme(true, Some(&Scheme::Http)), Scheme::Https);
+        assert_eq!(scheme(false, Some(&Scheme::Https)), Scheme::Https);
+        assert_eq!(scheme(false, None), Scheme::Http);
+    }
 }

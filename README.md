@@ -74,15 +74,17 @@ cargo test --no-default-features --features boa,fetch,axum
 
 `Embed::fetch` takes an `HttpRequest` and returns an `HttpResponse` from `openworkers-core`. For a web framework, enable its feature:
 
-| Feature | Entry point                                                                                   |
-| ------- | --------------------------------------------------------------------------------------------- |
-| `actix` | `backend::actix::handle`, used with `web::to` as a default service                            |
-| `hyper` | `backend::hyper::handle(&embed, request, peer)`, with the address of the connection           |
-| `axum`  | `backend::axum::router(embed)`, served with `into_make_service_with_connect_info::<SocketAddr>()` |
+| Feature | Entry point                                                                                                 |
+| ------- | ----------------------------------------------------------------------------------------------------------- |
+| `actix` | `backend::actix::handle`, used with `web::to` as a default service                                          |
+| `hyper` | `backend::hyper::handle(&embed, request)`, or `handle_with(&embed, request, connection)`                    |
+| `axum`  | `backend::axum::router(embed)` or `router_with(embed, scheme)`, served with `into_make_service_with_connect_info::<SocketAddr>()` |
 
-Each backend gives the worker its client as the OpenWorkers runner does, and as the adapters read it (`Astro.clientAddress`, the protocol of the URL). The headers that only the runner sets (`forwarded`, `x-forwarded-for`, `-host`, `-port`, `-proto`, `x-real-ip`, `cf-connecting-ip`, `x-request-id`, `x-worker-id`, `x-worker-name`, `x-openworkers-internal`, `x-openworkers-depth`) are removed from the request of the client. Then `x-real-ip`, `x-forwarded-for` and `cf-connecting-ip` get the address of the peer of the connection, and `x-forwarded-proto` the scheme of the listener. An axum router served without the connect info knows no peer: the worker then gets no address.
+Each backend gives the worker its client as the OpenWorkers runner does, and as the adapters read it (`Astro.clientAddress`, the protocol of the URL). The headers that only the runner sets (`forwarded`, `x-forwarded-for`, `-host`, `-port`, `-proto`, `x-real-ip`, `cf-connecting-ip`, `x-request-id`, `x-worker-id`, `x-worker-name`, `x-openworkers-internal`, `x-openworkers-depth`) are removed from the request of the client. Then `x-real-ip`, `x-forwarded-for` and `cf-connecting-ip` get the address of the peer of the connection, and `x-forwarded-proto`, like the start of the URL, the scheme.
 
-Behind a proxy, the peer is the proxy. To give the worker the address of the client, read it from the header of your proxy in your own handler, set `x-real-ip` on the `HttpRequest`, and call `Embed::fetch`, which passes the headers as they are.
+- The peer: axum reads it from the connect info, actix from the connection. `hyper::handle` has none; `handle_with` takes a `backend::Connection { peer, scheme }`. With no peer, the worker gets no address.
+- The scheme is `http` unless the host says otherwise: `Scheme::Https` in `router_with` (axum) or in `handle_with` (hyper), or as app data in actix (`App::new().app_data(Scheme::Https)`); actix also gives `https` when it ends TLS itself. A request whose scheme is wrong gets a wrong URL: Astro refuses a form POST whose origin does not match.
+- Behind a proxy, the peer is the proxy: the worker gets the address of the proxy. To give it the address of the client, read it from the header of your proxy in your own handler, set the headers above on the `HttpRequest`, and call `Embed::fetch`, which passes the headers as they are.
 
 ## Example
 
