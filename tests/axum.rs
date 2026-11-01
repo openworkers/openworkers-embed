@@ -4,7 +4,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::Request;
-use common::{CLIENT, ECHO};
+use common::{CLIENT, ECHO, RUNNER_HEADERS, client_seen};
 use http_body_util::BodyExt;
 use openworkers_embed::Embed;
 use openworkers_embed::backend::axum::router;
@@ -55,8 +55,8 @@ async fn the_host_header_does_not_choose_the_file() {
     assert_eq!(body, "home");
 }
 
-// A client on a real socket says it is 1.2.3.4 over https: the worker sees
-// its address, 127.0.0.1, and http
+// A client on a real socket sends every header of the runner, as if it were
+// 1.2.3.4 over https: the worker sees its address, 127.0.0.1, and http
 #[tokio::test]
 async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
     let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
@@ -66,35 +66,45 @@ async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
 
     tokio::spawn(async move { axum::serve(listener, app).await });
 
+    let mut head = String::from("GET /x HTTP/1.1\r\nhost: app.test\r\nconnection: close\r\n");
+
+    for name in RUNNER_HEADERS {
+        head.push_str(&format!("{name}: 1.2.3.4\r\n"));
+    }
+
+    head.push_str("x-forwarded-proto: https\r\n\r\n");
+
     let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
 
-    stream
-        .write_all(
-            b"GET / HTTP/1.1\r\nhost: x\r\nx-real-ip: 1.2.3.4\r\n\
-              x-forwarded-proto: https\r\nconnection: close\r\n\r\n",
-        )
-        .await
-        .unwrap();
+    stream.write_all(head.as_bytes()).await.unwrap();
 
     let mut answer = String::new();
 
     stream.read_to_string(&mut answer).await.unwrap();
 
-    // The body comes chunked: its one chunk is the line of the worker
-    assert!(answer.contains("\r\n127.0.0.1 http http:\r\n"), "{answer}");
+    let seen = client_seen("http://app.test/x", Some("127.0.0.1"), "http");
+
+    // The body comes chunked: its one chunk is the answer of the worker
+    assert!(answer.contains(&format!("\r\n{seen}\r\n")), "{answer}");
 }
 
 // Served without the connect info, the router knows no peer: the worker gets
-// no x-real-ip, not the one of the client
+// no address at all, not the ones of the client (Astro would read
+// X-Forwarded-For as the client address)
 #[tokio::test]
 async fn without_the_connect_info_the_worker_gets_no_address() {
     let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
-    let request = Request::get("/")
-        .header("x-real-ip", "1.2.3.4")
-        .body(Body::empty())
+    let mut request = Request::get("/x").header("host", "app.test");
+
+    for name in RUNNER_HEADERS {
+        request = request.header(name, "6.6.6.6");
+    }
+
+    let response = router(embed)
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
         .unwrap();
-    let response = router(embed).oneshot(request).await.unwrap();
     let body = response.into_body().collect().await.unwrap().to_bytes();
 
-    assert_eq!(body, "null http http:");
+    assert_eq!(body, client_seen("http://app.test/x", None, "http"));
 }

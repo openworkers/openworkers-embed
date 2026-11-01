@@ -19,19 +19,67 @@ export default {
 };
 "#;
 
-/// Answers with the client it sees: `x-real-ip`, `x-forwarded-proto` and the
-/// scheme of its URL.
+/// The headers that only the runner sets (`RUNNER_HEADERS` of
+/// openworkers-runner).
+pub const RUNNER_HEADERS: [&str; 12] = [
+    "x-worker-id",
+    "x-worker-name",
+    "x-openworkers-internal",
+    "x-openworkers-depth",
+    "x-request-id",
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "cf-connecting-ip",
+];
+
+/// Answers with the client it sees: its URL, then each header of the runner
+/// it got, as `name=value`, one per line.
 pub const CLIENT: &str = r#"
+const NAMES = [
+    'x-worker-id', 'x-worker-name', 'x-openworkers-internal', 'x-openworkers-depth',
+    'x-request-id', 'forwarded', 'x-forwarded-for', 'x-forwarded-host',
+    'x-forwarded-port', 'x-forwarded-proto', 'x-real-ip', 'cf-connecting-ip',
+];
+
 export default {
     async fetch(request) {
-        const url = new URL(request.url);
+        const lines = [request.url];
 
-        return new Response(
-            `${request.headers.get('x-real-ip')} ${request.headers.get('x-forwarded-proto')} ${url.protocol}`,
-        );
+        for (const name of NAMES) {
+            const value = request.headers.get(name);
+
+            if (value !== null) {
+                lines.push(`${name}=${value}`);
+            }
+        }
+
+        return new Response(lines.join('\n'));
     },
 };
 "#;
+
+/// What [`CLIENT`] answers for a request at `url` from `peer` (or no peer)
+/// over `scheme`.
+pub fn client_seen(url: &str, peer: Option<&str>, scheme: &str) -> String {
+    let mut lines = vec![url.to_string()];
+
+    if let Some(peer) = peer {
+        lines.push(format!("x-forwarded-for={peer}"));
+    }
+
+    lines.push(format!("x-forwarded-proto={scheme}"));
+
+    if let Some(peer) = peer {
+        lines.push(format!("x-real-ip={peer}"));
+        lines.push(format!("cf-connecting-ip={peer}"));
+    }
+
+    lines.join("\n")
+}
 
 pub fn get(path: &str) -> HttpRequest {
     HttpRequest {

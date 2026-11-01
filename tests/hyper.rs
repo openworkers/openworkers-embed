@@ -3,7 +3,7 @@
 mod common;
 
 use bytes::Bytes;
-use common::{CLIENT, ECHO};
+use common::{CLIENT, ECHO, RUNNER_HEADERS, client_seen};
 use http_body_util::{BodyExt, Full};
 use openworkers_embed::Embed;
 use openworkers_embed::backend::hyper::handle;
@@ -28,15 +28,21 @@ async fn a_hyper_request_reaches_the_worker_and_comes_back() {
     assert_eq!(body, "POST /play cookie=a=1; b=2 body=rock");
 }
 
-// The client says it is 1.2.3.4 over https: the worker sees the peer and the
-// scheme of the listener. A peer in IPv4-mapped IPv6 reads as IPv4
+// The client sends every header of the runner, as if it were 1.2.3.4 over
+// https: the worker sees only the peer and the scheme of the listener. A
+// peer in IPv4-mapped IPv6 reads as IPv4
 #[tokio::test]
 async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
     let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
 
     for peer in ["192.0.2.7:4000", "[::ffff:192.0.2.7]:4000"] {
-        let request = hyper::Request::get("/")
-            .header("x-real-ip", "1.2.3.4")
+        let mut request = hyper::Request::get("/x").header("host", "app.test");
+
+        for name in RUNNER_HEADERS {
+            request = request.header(name, "1.2.3.4");
+        }
+
+        let request = request
             .header("X-Forwarded-Proto", "https")
             .body(Full::new(Bytes::new()))
             .unwrap();
@@ -44,6 +50,10 @@ async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
         let response = handle(&embed, request, peer.parse().unwrap()).await;
         let body = response.into_body().collect().await.unwrap().to_bytes();
 
-        assert_eq!(body, "192.0.2.7 http http:", "{peer}");
+        assert_eq!(
+            body,
+            client_seen("http://app.test/x", Some("192.0.2.7"), "http"),
+            "{peer}"
+        );
     }
 }

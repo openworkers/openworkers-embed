@@ -3,7 +3,7 @@
 mod common;
 
 use actix_web::{App, test, web};
-use common::{CLIENT, ECHO};
+use common::{CLIENT, ECHO, RUNNER_HEADERS, client_seen};
 use openworkers_embed::Embed;
 use openworkers_embed::backend::actix::handle;
 
@@ -34,8 +34,8 @@ async fn an_actix_app_sends_requests_to_the_worker() {
     assert_eq!(body, "POST /play cookie=a=1 body=scissors");
 }
 
-// The client says it is 1.2.3.4 over https: the worker sees the peer and the
-// scheme of the server, in the headers and in the URL
+// The client sends every header of the runner, as if it were 1.2.3.4 over
+// https: the worker sees only the peer and the scheme of the server
 #[actix_web::test]
 async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
     let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
@@ -47,14 +47,26 @@ async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
     )
     .await;
 
-    let request = test::TestRequest::get()
-        .uri("/")
-        .peer_addr("192.0.2.7:4000".parse().unwrap())
-        .insert_header(("x-real-ip", "1.2.3.4"))
+    let mut request = test::TestRequest::get()
+        .uri("/x")
+        .insert_header(("host", "app.test"))
+        .peer_addr("192.0.2.7:4000".parse().unwrap());
+
+    for name in RUNNER_HEADERS {
+        request = request.insert_header((name, "1.2.3.4"));
+    }
+
+    let request = request
         .insert_header(("x-forwarded-proto", "https"))
         .to_request();
 
     let body = test::read_body(test::call_service(&app, request).await).await;
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    let seen = client_seen("http://app.test/x", Some("192.0.2.7"), "http");
 
-    assert_eq!(body, "192.0.2.7 http http:");
+    // The headers; the URL is the next commit's
+    assert_eq!(
+        body.split_once('\n').unwrap().1,
+        seen.split_once('\n').unwrap().1
+    );
 }
