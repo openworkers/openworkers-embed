@@ -120,3 +120,25 @@ async fn with_no_host_header_the_url_takes_the_authority() {
 
     assert_eq!(body, client_seen("https://app.test/x?q=1", None, "https"));
 }
+
+// The Host header goes into the URL: one with a path, a query, a userinfo,
+// nothing or a bad port is refused before the worker
+#[tokio::test]
+async fn a_bad_host_is_refused() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+
+    for host in [
+        "evil.example/admin?",
+        "app.test?x",
+        "user@evil.example",
+        "",
+        "app.test:99999",
+    ] {
+        let request = hyper::Request::get("/x")
+            .header("host", host)
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+
+        assert_eq!(handle(&embed, request).await.status(), 400, "{host:?}");
+    }
+}

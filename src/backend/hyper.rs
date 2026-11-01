@@ -1,6 +1,6 @@
 //! Any hyper 1 server.
 
-use super::{Connection, set_client, url};
+use super::{Connection, checked_authority, set_client, url};
 use crate::Embed;
 use crate::response::text;
 use http_body_util::{BodyExt, Limited};
@@ -35,6 +35,21 @@ where
 {
     let (parts, body) = request.into_parts();
 
+    // The Host header, else the authority of the URI (HTTP/2)
+    let authority = match parts.headers.get(hyper::header::HOST) {
+        Some(host) => host.to_str().ok(),
+        None => Some(
+            parts
+                .uri
+                .authority()
+                .map_or("localhost", |authority| authority.as_str()),
+        ),
+    };
+
+    let Some(authority) = authority.and_then(checked_authority) else {
+        return text(400, "the host of the request is not valid").into_hyper();
+    };
+
     let Ok(body) = Limited::new(body, MAX_REQUEST_BODY).collect().await else {
         return text(413, "the request body is too large or unreadable").into_hyper();
     };
@@ -46,14 +61,6 @@ where
         body.to_bytes(),
         connection.scheme.as_str(),
     );
-
-    // The Host header, else the authority of the URI (HTTP/2)
-    let authority = parts
-        .headers
-        .get(hyper::header::HOST)
-        .and_then(|host| host.to_str().ok())
-        .or_else(|| parts.uri.authority().map(|authority| authority.as_str()))
-        .unwrap_or("localhost");
 
     request.url = url(
         connection.scheme,

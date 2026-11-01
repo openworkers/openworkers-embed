@@ -57,6 +57,30 @@ pub(crate) fn url(scheme: Scheme, authority: &str, path_and_query: Option<&str>)
     )
 }
 
+/// `value` when it names a host as a URL can: a name of letters, digits, `.`,
+/// `-` and `_`, or an IPv6 address in brackets, with an optional port. A
+/// userinfo (`a@b`), a path, a query or any other character is refused: the
+/// Host header goes into the URL of the worker.
+#[cfg(any(feature = "actix", feature = "hyper"))]
+pub(crate) fn checked_authority(value: &str) -> Option<&str> {
+    let authority: http::uri::Authority = value.parse().ok()?;
+    let host = authority.host();
+    let named = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    let ipv6 = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .is_some_and(|address| address.parse::<std::net::Ipv6Addr>().is_ok());
+    let whole = match authority.port() {
+        Some(port) => port.as_str().parse::<u16>().is_ok() && value == format!("{host}:{port}"),
+        None => value == host,
+    };
+
+    ((named || ipv6) && whole).then_some(value)
+}
+
 /// The headers that only the runner sets, as `RUNNER_HEADERS` of
 /// openworkers-runner: a request from a client loses them.
 #[cfg(any(feature = "actix", feature = "hyper"))]
@@ -108,5 +132,43 @@ pub(crate) fn set_client(request: &mut HttpRequest, connection: Connection) {
 
     if let Some((_, rest)) = request.url.split_once("://") {
         request.url = format!("{scheme}://{rest}");
+    }
+}
+
+#[cfg(all(test, any(feature = "actix", feature = "hyper")))]
+mod tests {
+    use super::checked_authority;
+
+    #[test]
+    fn an_authority_names_a_host_and_an_optional_port() {
+        for good in [
+            "app.test",
+            "app.test:8080",
+            "127.0.0.1",
+            "[::1]",
+            "[::1]:3000",
+            "a_b-c",
+        ] {
+            assert_eq!(checked_authority(good), Some(good));
+        }
+
+        for bad in [
+            "",
+            "evil.example/admin?",
+            "a?b",
+            "a/b",
+            "a@b",
+            "user:pass@app.test",
+            "a:",
+            "a:99999",
+            "a:8a",
+            "a!b",
+            "*",
+            "a b",
+            "[::1",
+            "[app.test]",
+        ] {
+            assert_eq!(checked_authority(bad), None, "{bad:?}");
+        }
     }
 }

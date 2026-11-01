@@ -31,8 +31,8 @@ async fn an_axum_router_sends_requests_to_the_worker() {
     assert_eq!(body, "POST /play cookie=a=1 body=paper");
 }
 
-// The Host header goes into the URL of the request; the file served comes from
-// the path of the request line, not from the Host
+// The file served comes from the path of the request line, not from the Host;
+// a Host with a path is refused before any file is looked up
 #[tokio::test]
 async fn the_host_header_does_not_choose_the_file() {
     let site = tempfile::tempdir().unwrap();
@@ -46,14 +46,23 @@ async fn the_host_header_does_not_choose_the_file() {
         .assets(site.path())
         .build()
         .unwrap();
+    let router = router(embed);
+    let request = Request::get("/index.html")
+        .header("host", "x")
+        .body(Body::empty())
+        .unwrap();
+    let response = router.clone().oneshot(request).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(body, "home");
+
     let request = Request::get("/index.html")
         .header("host", "x/.well-known/security.txt?")
         .body(Body::empty())
         .unwrap();
-    let response = router(embed).oneshot(request).await.unwrap();
-    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let response = router.oneshot(request).await.unwrap();
 
-    assert_eq!(body, "home");
+    assert_eq!(response.status(), 400);
 }
 
 // A client on a real socket sends every header of the runner, as if it were
@@ -143,4 +152,27 @@ async fn with_no_host_header_the_url_takes_the_authority() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
 
     assert_eq!(body, client_seen("https://app.test/x?q=1", None, "https"));
+}
+
+// The Host header goes into the URL: one with a path, a query, a userinfo,
+// nothing or a bad port is refused before the worker
+#[tokio::test]
+async fn a_bad_host_is_refused() {
+    let router = router(Embed::builder(CLIENT).threads(1).build().unwrap());
+
+    for host in [
+        "evil.example/admin?",
+        "app.test?x",
+        "user@evil.example",
+        "",
+        "app.test:99999",
+    ] {
+        let request = Request::get("/x")
+            .header("host", host)
+            .body(Body::empty())
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), 400, "{host:?}");
+    }
 }

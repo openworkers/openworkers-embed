@@ -1,6 +1,6 @@
 //! Actix Web.
 
-use super::{Connection, Scheme, set_client, url};
+use super::{Connection, Scheme, checked_authority, set_client, url};
 use crate::Embed;
 use crate::response::text;
 use actix_web::{HttpRequest as ActixRequest, HttpResponse as ActixResponse, web};
@@ -34,17 +34,17 @@ pub async fn handle(
 
     // The Host header, else the authority of the URI (HTTP/2), else the host
     // of the server config
-    let authority = request
-        .headers()
-        .get(actix_web::http::header::HOST)
-        .and_then(|host| host.to_str().ok())
-        .or_else(|| {
-            request
-                .uri()
-                .authority()
-                .map(|authority| authority.as_str())
-        })
-        .unwrap_or_else(|| request.app_config().host());
+    let authority = match request.headers().get(actix_web::http::header::HOST) {
+        Some(host) => host.to_str().ok(),
+        None => Some(request.uri().authority().map_or_else(
+            || request.app_config().host(),
+            |authority| authority.as_str(),
+        )),
+    };
+
+    let Some(authority) = authority.and_then(checked_authority) else {
+        return text(400, "the host of the request is not valid").into();
+    };
 
     worker_request.url = url(
         connection.scheme,

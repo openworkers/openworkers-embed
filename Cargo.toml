@@ -18,8 +18,8 @@ boa = ["dep:openworkers-runtime-boa"]
 fetch = ["dep:reqwest", "dep:futures-util"]
 
 # The web frameworks openworkers-core converts requests and responses for
-actix = ["dep:actix-web", "openworkers-core/actix"]
-hyper = ["dep:hyper", "dep:http-body-util", "openworkers-core/hyper"]
+actix = ["dep:actix-web", "dep:http", "openworkers-core/actix"]
+hyper = ["dep:hyper", "dep:http", "dep:http-body-util", "openworkers-core/hyper"]
 axum = ["dep:axum", "hyper"]
 
 [dependencies]
@@ -35,6 +35,7 @@ actix-web = { version = "4", optional = true }
 axum = { version = "0.8", optional = true }
 bytes = "1"
 futures-util = { version = "0.3", default-features = false, optional = true }
+http = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"], optional = true }
