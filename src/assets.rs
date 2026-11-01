@@ -234,10 +234,12 @@ fn walk(
     }
 }
 
-/// SvelteKit names these files by hash, so they never change.
+/// SvelteKit (`_app/immutable/`) and Astro (`_astro/`, under the base path
+/// if any) name these files by hash, so they never change.
 fn immutable(path: &str) -> Option<&'static str> {
-    path.contains("_app/immutable/")
-        .then_some("public, max-age=31536000, immutable")
+    let astro = path.starts_with("_astro/") || path.contains("/_astro/");
+
+    (path.contains("_app/immutable/") || astro).then_some("public, max-age=31536000, immutable")
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -528,6 +530,10 @@ mod tests {
     #[test]
     fn only_hashed_files_are_immutable() {
         assert!(immutable("_app/immutable/chunks/a.js").is_some());
+        assert!(immutable("_astro/pixel.B-OjCZyu.png").is_some());
+        assert!(immutable("docs/_astro/index.Dx1.js").is_some());
         assert!(immutable("favicon.ico").is_none());
+        assert!(immutable("my_astro/a.js").is_none());
+        assert!(immutable("_astro.png").is_none());
     }
 }

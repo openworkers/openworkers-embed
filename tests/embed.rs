@@ -112,9 +112,11 @@ fn site() -> (tempfile::TempDir, Embed) {
     let assets = site.path().join("assets");
 
     fs::create_dir_all(assets.join("_app/immutable")).unwrap();
+    fs::create_dir_all(assets.join("_astro")).unwrap();
     fs::write(assets.join("a.txt"), "plain").unwrap();
     fs::write(assets.join("about.html"), "<h1>about</h1>").unwrap();
     fs::write(assets.join("_app/immutable/x.js"), "export {}").unwrap();
+    fs::write(assets.join("_astro/page.Dx1.js"), "export {}").unwrap();
     fs::write(site.path().join("secret.txt"), "secret").unwrap();
 
     let worker = r#"
@@ -167,12 +169,20 @@ async fn a_prerendered_page_answers_without_its_extension() {
 async fn hashed_files_are_cached_for_good() {
     let (_site, embed) = site();
 
-    let response = embed.fetch(get("/_app/immutable/x.js")).await.unwrap();
+    // SvelteKit, then Astro
+    for path in ["/_app/immutable/x.js", "/_astro/page.Dx1.js"] {
+        let response = embed.fetch(get(path)).await.unwrap();
 
-    assert_eq!(
-        header(&response, "cache-control"),
-        Some("public, max-age=31536000, immutable")
-    );
+        assert_eq!(
+            header(&response, "cache-control"),
+            Some("public, max-age=31536000, immutable"),
+            "{path}"
+        );
+    }
+
+    let response = embed.fetch(get("/a.txt")).await.unwrap();
+
+    assert_eq!(header(&response, "cache-control"), None);
 }
 
 #[tokio::test]
