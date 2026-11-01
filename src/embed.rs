@@ -62,8 +62,10 @@ impl EmbedBuilder {
 
     /// A text variable: the worker reads it as `env.<name>`, in the `env` of
     /// `fetch` and in `globalThis.env` (where `astro:env` looks). A second call
-    /// with the same name replaces the value. The names of the bindings,
-    /// `EMBED` and `ASSETS`, are refused by [`build`](Self::build).
+    /// with the same name replaces the value. [`build`](Self::build) refuses a
+    /// name that is not a JavaScript identifier (letters, digits, `_` and `$`,
+    /// not starting with a digit), `__proto__`, and the names of the bindings,
+    /// `EMBED` and `ASSETS`.
     pub fn var(mut self, name: &str, value: &str) -> Self {
         self.vars.insert(name.to_string(), value.to_string());
         self
@@ -81,14 +83,8 @@ impl EmbedBuilder {
             assets: self.assets,
         };
 
-        if let Some(name) = self
-            .vars
-            .keys()
-            .find(|name| BINDINGS.contains(&name.as_str()))
-        {
-            return Err(EmbedError::Setting(format!(
-                "the variable {name} has the name of a binding"
-            )));
+        for name in self.vars.keys() {
+            check_var(name)?;
         }
 
         Ok(Embed {
@@ -97,6 +93,30 @@ impl EmbedBuilder {
             pool: WorkerPool::start(self.threads)?,
         })
     }
+}
+
+/// A name the worker reads as `env.<name>`: an identifier, which the engines
+/// would not drop. `__proto__` sets the prototype of `env` instead of a key.
+fn check_var(name: &str) -> Result<(), EmbedError> {
+    let mut chars = name.chars();
+    let identifier = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || first == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+
+    if !identifier || name == "__proto__" {
+        return Err(EmbedError::Setting(format!(
+            "the variable name {name:?} is not an identifier the worker can read"
+        )));
+    }
+
+    if BINDINGS.contains(&name) {
+        return Err(EmbedError::Setting(format!(
+            "the variable {name} has the name of a binding"
+        )));
+    }
+
+    Ok(())
 }
 
 /// A worker running inside this process. Hand it requests with [`fetch`](Self::fetch),

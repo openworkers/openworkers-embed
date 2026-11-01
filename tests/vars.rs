@@ -44,6 +44,51 @@ async fn a_second_value_replaces_the_first() {
 }
 
 #[test]
+fn a_variable_name_is_an_identifier() {
+    for name in ["", " ", "MY VAR", "1ST", "a-b", "__proto__", "é"] {
+        let built = Embed::builder(ASTRO_STYLE).var(name, "x").build();
+
+        assert!(
+            matches!(&built, Err(EmbedError::Setting(message)) if message.contains("identifier")),
+            "{name:?}"
+        );
+    }
+
+    for name in ["A", "_a", "$a", "API_KEY_2", "proto"] {
+        assert!(
+            Embed::builder(ASTRO_STYLE).var(name, "x").build().is_ok(),
+            "{name:?}"
+        );
+    }
+}
+
+// The variables do not hide the binding of the commands
+#[tokio::test]
+async fn commands_still_work_with_variables() {
+    let worker = r#"
+export default {
+    async fetch(request, env) {
+        const sum = await env.EMBED.invoke('add', [env.A, 2]);
+
+        return new Response(`${sum} ${env.A}`);
+    },
+};
+"#;
+    let embed = Embed::builder(worker)
+        .threads(1)
+        .var("A", "1")
+        .command_sync("add", |(a, b): (String, u32)| {
+            Ok::<_, String>(a.parse::<u32>().unwrap() + b)
+        })
+        .build()
+        .unwrap();
+
+    let response = embed.fetch(get("/")).await.unwrap();
+
+    assert_eq!(text(response).await, "3 1");
+}
+
+#[test]
 fn a_variable_cannot_take_the_name_of_a_binding() {
     for name in ["EMBED", "ASSETS"] {
         let built = Embed::builder(ASTRO_STYLE).var(name, "x").build();
