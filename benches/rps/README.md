@@ -13,8 +13,9 @@ within the spread (median 3 us lower; the ranges overlap by 3 us). One
 worker thread runs the JavaScript, but Embed parses HTTP on other threads
 (Axum on tokio), while Node and Bun do everything on one thread; see
 "One thread" below.
-Bun stays ahead (see below); the work on Bun stops here, and JSC stays a
-supported engine of Embed. With 2 worker threads, Embed serves 3.4 percent
+Bun serves 42 percent more requests per second than Embed (5678 against
+3997 at 64 connections, release build). The cause is not known. With 2
+worker threads, Embed serves 3.4 percent
 more requests per second than Node.js with 2 cluster processes (ranges
 apart); with 4, the two are equal within the spread. See "21 - Several
 threads".
