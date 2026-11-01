@@ -61,12 +61,37 @@ async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
         .to_request();
 
     let body = test::read_body(test::call_service(&app, request).await).await;
-    let body = String::from_utf8(body.to_vec()).unwrap();
-    let seen = client_seen("http://app.test/x", Some("192.0.2.7"), "http");
 
-    // The headers; the URL is the next commit's
     assert_eq!(
-        body.split_once('\n').unwrap().1,
-        seen.split_once('\n').unwrap().1
+        body,
+        client_seen("http://app.test/x", Some("192.0.2.7"), "http")
     );
+}
+
+// Forwarded and X-Forwarded-Host of the client do not choose the URL of the
+// worker: actix's connection_info would read them
+#[actix_web::test]
+async fn the_url_comes_from_the_host_header_and_the_request_line() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(embed))
+            .default_service(web::to(handle)),
+    )
+    .await;
+
+    let request = test::TestRequest::get()
+        .uri("/page?q=1")
+        .insert_header(("host", "app.test"))
+        .insert_header((
+            "forwarded",
+            "proto=http://evil.example/admin?x=;host=evil.example",
+        ))
+        .insert_header(("x-forwarded-host", "evil.example"))
+        .to_request();
+
+    let body = test::read_body(test::call_service(&app, request).await).await;
+
+    assert_eq!(body, client_seen("http://app.test/page?q=1", None, "http"));
 }
