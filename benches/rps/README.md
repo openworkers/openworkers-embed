@@ -19,6 +19,77 @@ more requests per second than Node.js with 2 cluster processes (ranges
 apart); with 4, the two are equal within the spread. See "21 - Several
 threads".
 
+### Release build, with the V8 snapshot
+
+The build of release 0.18.0 (0068c83, runtime-v8 d817214, runtime-jsc
+1c8a09e, runtime-boa 70bff26, runtime-nova v0.18.2, all from GitHub, no
+[patch]), with the V8 snapshot written by `cargo run --release --bin
+snapshot` (688 KB). Every number before this section ran without a
+snapshot: the file was empty. Same machine, app, database and scripts as
+below. Load average 1.7 to 5.7. Raw lines: `results/26-*.txt`.
+
+Page /, `run.sh`, 5 runs of 10 s, the three hosts in turn, min / median /
+max (the "end" row of the next section, without a snapshot, for
+comparison):
+
+| Host                  | p50, 1 conn (us) | p99, 1 conn (us) | req/s, 64 conn     |
+| --------------------- | ---------------- | ---------------- | ------------------ |
+| embed, snapshot       | 333 / 334 / 339  | 834 / 852 / 878  | 3966 / 3997 / 4012 |
+| end, no snapshot      | 337 / 339 / 342  | 849 / 863 / 903  | 3886 / 3948 / 3989 |
+| node                  | 339 / 340 / 342  | 410 / 413 / 422  | 3793 / 3809 / 3816 |
+| bun                   | 203 / 205 / 206  | 405 / 409 / 418  | 5557 / 5678 / 5728 |
+
+- Against Node: 4.9 percent more requests per second at 64 connections
+  (ranges apart); the p50 at 1 connection is 6 us lower on the median (the
+  ranges touch at 339 us).
+- Against the end build without a snapshot: every change is under 2
+  percent, within what Node and Bun moved between the two nights (1 to 3
+  percent). The snapshot does not change the steady state.
+
+Several threads, `threads.py`, 3 rounds of 10 s, median req/s at 64 and
+256 connections (section 21, without a snapshot, in brackets):
+
+| n | embed, 64      | node, 64       | bun, 64      | embed, 256     | node, 256      |
+| - | -------------- | -------------- | ------------ | -------------- | -------------- |
+| 1 | 3954 (3923)    | 3792 (3760)    | 5656 (5561)  | 3991 (3953)    | 3810 (3778)    |
+| 2 | 7406 (7382)    | 7173 (7141)    | 5658 (5496)  | 7472 (7406)    | 7206 (7130)    |
+| 4 | 11188 (10901)  | 10720 (10704)  | 5616 (5546)  | 11250 (11010)  | 11075 (10985)  |
+
+- At 64 connections, Embed serves 4.3, 3.2 and 4.4 percent more requests
+  per second than Node at 1, 2 and 4 (ranges apart at each n). At 256
+  connections and 4, 1.6 percent more (ranges apart).
+- The p99 at 64 connections: Embed 19.7, 11.8 and 9.3 ms at 1, 2 and 4;
+  Node 32.3, 17.1 and 13.3 ms.
+- Bun above 1 process is still not a scaling result (see section 21).
+
+Other engines, page /, `run.sh`, Embed in turn with the v8 build above:
+
+| Engine              | Runs   | p50, 1 conn       | req/s, 64 conn | Before                       |
+| ------------------- | ------ | ----------------- | -------------- | ---------------------------- |
+| jsc, JIT, polling traps | 3 x 5 s  | 375 / 376 / 377 us | 3006 / 3028 / 3028 | 382 us, 2962 (Warm JSC engine) |
+| v8, same rounds     | 3 x 5 s  | 333 / 337 / 340 us | 3935 / 3984 / 3985 | 333 us, 3964 |
+| boa                 | 3 x 10 s | 43.94 / 43.96 / 44.02 ms | 29 / 29 / 29 | 44.74 ms, 29 (24) |
+| nova (the build of section 25) | 3 x 10 s | 45.53 / 45.72 / 45.72 ms | 28 / 28 / 28 | 46.15 ms, 28 (25) |
+
+- jsc serves 24 percent fewer requests per second than v8 in the same
+  rounds. Against section 22 (5 runs of 10 s, 2692 req/s at the median),
+  the number is 12.5 percent higher; the runs of 5 s and 10 s differ, and
+  the cause was not looked for.
+- boa and nova do not change.
+
+Cold start of `examples/rps` on v8, 10 starts each, min / median / max:
+
+| Snapshot | Start to listening (ms) | First request of / (ms) |
+| -------- | ----------------------- | ----------------------- |
+| yes      | 15.3 / 15.7 / 16.2      | 11.8 / 12.0 / 17.3      |
+| no       | 15.4 / 16.0 / 16.9      | 13.0 / 13.5 / 19.4      |
+
+The snapshot saves about 1.5 ms on the first request, which makes the
+isolate and runs the bundle. From the 6th request the two are equal (0.84
+against 0.85 ms, then 0.67 against 0.66 ms, medians of 8 starts); the 2nd
+request was 1.64 ms with and 1.33 ms without, the 3rd 1.20 against 1.41
+ms.
+
 ### Start and end, under the same conditions
 
 Page / of rock-paper-scissors, Apple M2, release, oha, 5 runs of 10 s, the
