@@ -3,7 +3,7 @@
 mod common;
 
 use actix_web::{App, test, web};
-use common::ECHO;
+use common::{CLIENT, ECHO};
 use openworkers_embed::Embed;
 use openworkers_embed::backend::actix::handle;
 
@@ -32,4 +32,29 @@ async fn an_actix_app_sends_requests_to_the_worker() {
     let body = test::read_body(response).await;
 
     assert_eq!(body, "POST /play cookie=a=1 body=scissors");
+}
+
+// The client says it is 1.2.3.4 over https: the worker sees the peer and the
+// scheme of the server, in the headers and in the URL
+#[actix_web::test]
+async fn the_worker_sees_the_peer_and_not_the_headers_of_the_client() {
+    let embed = Embed::builder(CLIENT).threads(1).build().unwrap();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(embed))
+            .default_service(web::to(handle)),
+    )
+    .await;
+
+    let request = test::TestRequest::get()
+        .uri("/")
+        .peer_addr("192.0.2.7:4000".parse().unwrap())
+        .insert_header(("x-real-ip", "1.2.3.4"))
+        .insert_header(("x-forwarded-proto", "https"))
+        .to_request();
+
+    let body = test::read_body(test::call_service(&app, request).await).await;
+
+    assert_eq!(body, "192.0.2.7 http http:");
 }

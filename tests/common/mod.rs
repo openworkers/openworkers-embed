@@ -19,6 +19,20 @@ export default {
 };
 "#;
 
+/// Answers with the client it sees: `x-real-ip`, `x-forwarded-proto` and the
+/// scheme of its URL.
+pub const CLIENT: &str = r#"
+export default {
+    async fetch(request) {
+        const url = new URL(request.url);
+
+        return new Response(
+            `${request.headers.get('x-real-ip')} ${request.headers.get('x-forwarded-proto')} ${url.protocol}`,
+        );
+    },
+};
+"#;
+
 pub fn get(path: &str) -> HttpRequest {
     HttpRequest {
         method: HttpMethod::Get,

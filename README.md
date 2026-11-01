@@ -74,11 +74,15 @@ cargo test --no-default-features --features boa,fetch,axum
 
 `Embed::fetch` takes an `HttpRequest` and returns an `HttpResponse` from `openworkers-core`. For a web framework, enable its feature:
 
-| Feature | Entry point                                                        |
-| ------- | ------------------------------------------------------------------ |
-| `actix` | `backend::actix::handle`, used with `web::to` as a default service |
-| `hyper` | `backend::hyper::handle(&embed, request)`                          |
-| `axum`  | `backend::axum::router(embed)`                                     |
+| Feature | Entry point                                                                                   |
+| ------- | --------------------------------------------------------------------------------------------- |
+| `actix` | `backend::actix::handle`, used with `web::to` as a default service                            |
+| `hyper` | `backend::hyper::handle(&embed, request, peer)`, with the address of the connection           |
+| `axum`  | `backend::axum::router(embed)`, served with `into_make_service_with_connect_info::<SocketAddr>()` |
+
+Each backend gives the worker its client as the proxy in front of the OpenWorkers runner does, and as the adapters read it (`Astro.clientAddress`, the protocol of the URL): `x-real-ip` is the address of the peer of the connection, and `x-forwarded-proto` the scheme of the listener. A value that the client sends in these headers is replaced, never passed on. An axum router served without the connect info knows no peer: the worker then gets no `x-real-ip`.
+
+Behind a proxy, the peer is the proxy. To give the worker the address of the client, read it from the header of your proxy in your own handler, set `x-real-ip` on the `HttpRequest`, and call `Embed::fetch`, which passes the headers as they are.
 
 ## Example
 

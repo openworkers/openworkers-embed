@@ -8,6 +8,7 @@
 
 use openworkers_embed::Embed;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,7 +71,9 @@ async fn main() {
         .unwrap();
 
     println!("listening on http://127.0.0.1:{port}");
-    axum::serve(listener, openworkers_embed::backend::axum::router(embed))
-        .await
-        .unwrap();
+    // The connect info gives the worker the address of the client (x-real-ip)
+    let app = openworkers_embed::backend::axum::router(embed)
+        .into_make_service_with_connect_info::<SocketAddr>();
+
+    axum::serve(listener, app).await.unwrap();
 }
