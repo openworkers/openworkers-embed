@@ -39,15 +39,7 @@ start() {
 
 measure() {
   oha --no-tui --output-format json -z "${SECONDS_PER_RUN}s" -c "$3" "$URL" |
-    python3 -c '
-import json, os, sys
-r = json.load(sys.stdin)
-codes = r["statusCodeDistribution"]
-assert list(codes) == ["200"], codes
-p = r["latencyPercentiles"]
-print(sys.argv[1], sys.argv[2], sys.argv[3], round(r["summary"]["requestsPerSec"]),
-      round(p["p50"] * 1000, 3), round(p["p99"] * 1000, 3), os.getloadavg()[0], flush=True)
-' "$1" "$2" "$3"
+    bun "$ROOT/benches/rps/oha.ts" "$1" "$2" "$3"
 }
 
 for round in $(seq "$ROUNDS"); do

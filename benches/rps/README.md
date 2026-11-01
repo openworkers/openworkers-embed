@@ -47,7 +47,7 @@ comparison):
   percent, within what Node and Bun moved between the two nights (1 to 3
   percent). The snapshot does not change the steady state.
 
-Several threads, `threads.py`, 3 rounds of 10 s, median req/s at 64 and
+Several threads, `threads.ts`, 3 rounds of 10 s, median req/s at 64 and
 256 connections (section 21, without a snapshot, in brackets):
 
 | n | embed, 64      | node, 64       | bun, 64      | embed, 256     | node, 256      |
@@ -459,8 +459,8 @@ benches/rps/ladder.sh <app>/build/assets 5 5
   openworkers-runtime-v8` (or `-p openworkers-runtime-jsc`) fixes it.
 - `run.sh` measures page `/` on the three hosts.
 - `ladder.sh` measures the layers one by one (see below).
-- `threads.py <app>/build <rps.sqlite>` measures 1, 2 and 4 threads or
-  processes on the three hosts (see "21 - Several threads").
+- `bun benches/rps/threads.ts <app>/build <rps.sqlite>` measures 1, 2 and 4
+  threads or processes on the three hosts (see "21 - Several threads").
 - Each round starts each server, warms it for 2 or 3 s at 64 connections, then
   measures 1 connection and 64 connections with `oha`.
 - The servers take turns in each round, so a change of the machine load falls
@@ -756,7 +756,7 @@ No change on the page, which sends one piece.
 
 ### 21 - Several threads
 
-Page /, `threads.py`, 3 rounds of 10 s, each after a warm-up of 3 s at 64
+Page /, `threads.ts`, 3 rounds of 10 s, each after a warm-up of 3 s at 64
 connections. Embed runs V8 with `THREADS` worker threads (the engine of
 this branch). Node runs `node:cluster` with as many processes. Bun runs as
 many processes with `reusePort`. No build tool ran during a measure (the
