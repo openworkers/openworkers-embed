@@ -89,7 +89,15 @@ The build directory holds `_worker.js` and `assets/`. Without it, the example se
 
 ## Build
 
-With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile time. Set it in `.cargo/config.toml` of your program, as this repository does. An empty file means no snapshot: the runtime starts slower and still works.
+With `v8`, `openworkers-runtime-v8` reads `RUNTIME_SNAPSHOT_PATH` at compile time. Set it in `.cargo/config.toml` of your program, as this repository does. When it starts, the runtime reads the V8 snapshot from that path: the bindings of the runtime, compiled once. An empty or missing file means no snapshot: the runtime starts slower and still works.
+
+Write the snapshot before you run, and again after each update of `openworkers-runtime-v8`:
+
+```bash
+cargo run --release --bin snapshot
+```
+
+A program that uses this crate calls `openworkers_embed::snapshot::write()` from a binary of its own, built with the same `openworkers-runtime-v8`.
 
 ## Limits
 

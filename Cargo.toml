@@ -58,6 +58,10 @@ tower = { version = "0.5", features = ["util"] }
 name = "fetch"
 harness = false
 
+[[bin]]
+name = "snapshot"
+required-features = ["v8"]
+
 [[example]]
 name = "server"
 required-features = ["axum"]

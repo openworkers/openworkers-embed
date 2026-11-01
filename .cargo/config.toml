@@ -1,4 +1,5 @@
 [env]
-# openworkers-runtime-v8 bakes this path in at compile time. An empty file means no
-# snapshot: the runtime starts slower and still works.
+# openworkers-runtime-v8 bakes this path in at compile time and reads the V8
+# snapshot from it at start; `cargo run --release --bin snapshot` writes it. An
+# empty file means no snapshot: the runtime starts slower and still works.
 RUNTIME_SNAPSHOT_PATH = { value = "target/runtime-snapshot.bin", relative = true }

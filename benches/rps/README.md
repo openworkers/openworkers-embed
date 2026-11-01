@@ -375,6 +375,7 @@ For several threads, `benches/rps/node-cluster.mjs` runs `node.mjs` in
 
 ```sh
 cargo build --release --features axum --example rps --example ladder
+cargo run --release --bin snapshot
 benches/rps/run.sh <app>/build <rps.sqlite> 5 10
 benches/rps/ladder.sh <app>/build/assets 5 5
 ```

@@ -20,6 +20,8 @@ mod response;
 mod url;
 
 pub mod backend;
+#[cfg(feature = "v8")]
+pub mod snapshot;
 
 pub use embed::{Embed, EmbedBuilder};
 pub use error::EmbedError;
