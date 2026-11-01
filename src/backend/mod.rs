@@ -15,6 +15,8 @@ use std::net::SocketAddr;
 
 /// The scheme the client used. A backend cannot see TLS that a proxy ends in
 /// front of it: behind such a proxy, the host says `Https`.
+/// In actix, the backend finds it as `.app_data(Scheme::Https)`, not as
+/// `web::Data<Scheme>`.
 #[cfg(any(feature = "actix", feature = "hyper"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scheme {
@@ -105,9 +107,9 @@ const CLIENT_HEADERS: [&str; 3] = ["x-real-ip", "x-forwarded-for", "cf-connectin
 
 /// Give the worker its client as the runner does: the headers of the runner
 /// that the client sent are removed; the address of the peer goes in
-/// `x-real-ip`, `x-forwarded-for` and `cf-connecting-ip`, and the scheme of the
-/// listener in `x-forwarded-proto` and at the start of the URL. With no peer,
-/// the worker gets no address.
+/// `x-real-ip`, `x-forwarded-for` and `cf-connecting-ip`, and the scheme in
+/// `x-forwarded-proto` (the backends start the URL with it, through [`url`]).
+/// With no peer, the worker gets no address.
 #[cfg(any(feature = "actix", feature = "hyper"))]
 pub(crate) fn set_client(request: &mut HttpRequest, connection: Connection) {
     let scheme = connection.scheme.as_str();
@@ -129,10 +131,6 @@ pub(crate) fn set_client(request: &mut HttpRequest, connection: Connection) {
     request
         .headers
         .insert("x-forwarded-proto".to_string(), scheme.to_string());
-
-    if let Some((_, rest)) = request.url.split_once("://") {
-        request.url = format!("{scheme}://{rest}");
-    }
 }
 
 #[cfg(all(test, any(feature = "actix", feature = "hyper")))]
