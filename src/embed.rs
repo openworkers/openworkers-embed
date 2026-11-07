@@ -17,6 +17,8 @@ pub struct EmbedBuilder {
     code: String,
     commands: Commands,
     assets: Option<Arc<Assets>>,
+    #[cfg(feature = "fetch")]
+    fetch: bool,
     vars: HashMap<String, String>,
     threads: usize,
 }
@@ -67,6 +69,25 @@ impl EmbedBuilder {
         self.command(name, move |args| std::future::ready(function(args)))
     }
 
+    /// Whether the `fetch` of the worker goes out over HTTP. It is on by default.
+    /// `fetch(false)` makes the call throw `Fetch not available`; the assets and
+    /// the commands do not use it.
+    ///
+    /// Without the `fetch` feature, `fetch(true)` panics.
+    pub fn fetch(self, enabled: bool) -> Self {
+        #[cfg(feature = "fetch")]
+        return Self {
+            fetch: enabled,
+            ..self
+        };
+
+        #[cfg(not(feature = "fetch"))]
+        {
+            assert!(!enabled, "fetch(true) needs the `fetch` feature");
+            self
+        }
+    }
+
     /// A text variable: the worker reads it as `env.<name>`, in the `env` of
     /// `fetch` and in `globalThis.env` (where `astro:env` looks). A second call
     /// with the same name replaces the value. [`build`](Self::build) refuses a
@@ -88,6 +109,8 @@ impl EmbedBuilder {
         let host = Host {
             commands: self.commands,
             assets: self.assets,
+            #[cfg(feature = "fetch")]
+            fetch: self.fetch,
         };
 
         for name in self.vars.keys() {
@@ -141,6 +164,8 @@ impl Embed {
             code: code.into(),
             commands: Commands::default(),
             assets: None,
+            #[cfg(feature = "fetch")]
+            fetch: true,
             vars: HashMap::new(),
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
         }

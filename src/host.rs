@@ -18,10 +18,13 @@ const ASSETS_BINDING: &str = "ASSETS";
 /// The names of the bindings, which a variable cannot take.
 pub(crate) const BINDINGS: [&str; 2] = [COMMAND_BINDING, ASSETS_BINDING];
 
-/// What a worker reaches on the Rust side: commands, and the assets directory.
+/// What a worker reaches on the Rust side: commands, the assets directory, and
+/// the network when `fetch` is on.
 pub(crate) struct Host {
     pub commands: Commands,
     pub assets: Option<Arc<Assets>>,
+    #[cfg(feature = "fetch")]
+    pub fetch: bool,
 }
 
 impl Host {
@@ -43,6 +46,10 @@ impl OperationsHandler for Host {
     /// The `fetch` of the worker: HTTP out, with the body streamed back.
     #[cfg(feature = "fetch")]
     fn handle_fetch(&self, request: HttpRequest) -> OpFuture<'_, Result<HttpResponse, String>> {
+        if !self.fetch {
+            return Box::pin(async { Err("Fetch not available".into()) });
+        }
+
         Box::pin(crate::fetch::fetch(request))
     }
 

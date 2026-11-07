@@ -696,3 +696,23 @@ async fn a_stream_that_waits_for_its_reader_is_bounded_and_lets_others_run() {
 
     drop(stream);
 }
+
+#[tokio::test]
+async fn a_worker_cannot_fetch_when_fetch_is_off() {
+    let worker = "export default { async fetch() { try { await fetch('http://127.0.0.1:9/'); return new Response('reached'); } catch (error) { return new Response(error.message); } } };";
+    let embed = Embed::builder(worker)
+        .threads(1)
+        .fetch(false)
+        .build()
+        .unwrap();
+    let message = text(embed.fetch(get("/")).await.unwrap()).await;
+
+    assert!(message.contains("not available"), "{message}");
+}
+
+#[cfg(not(feature = "fetch"))]
+#[test]
+#[should_panic(expected = "needs the `fetch` feature")]
+fn fetch_needs_its_feature() {
+    Embed::builder("export default { fetch: () => new Response('') };").fetch(true);
+}
