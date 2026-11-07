@@ -22,9 +22,9 @@
 //! - A directory that two links reach is indexed under the first one only.
 //!   Through the other, nothing is served, unless the files are reloading
 //!   and the name has a dot.
-//! - Links are followed and not checked against the root: a link to `/`
-//!   indexes and serves that whole tree. Do not put such a link in the
-//!   assets directory.
+//! - A link is checked against the root when the index is built, not when a
+//!   file is read: the owner of the directory can swap a link after start.
+//!   [`Assets::reloading`] does not check links at all.
 //! - The dot rule reads the names of the URL, not the target of a link: a
 //!   link named `env.txt` to `.env` serves it. Only the owner of the
 //!   directory can make such a link.
@@ -69,8 +69,10 @@ impl Asset {
 }
 
 impl Assets {
+    /// A link whose target is outside `root` is not indexed.
     pub fn new(root: PathBuf) -> Self {
-        let files = index(&root);
+        let confined = std::fs::canonicalize(&root).ok();
+        let files = index(&root, confined.as_deref());
 
         Self {
             root,
@@ -80,11 +82,14 @@ impl Assets {
     }
 
     /// Like [`new`](Self::new), and a file that a rebuild adds after start is
-    /// served too.
+    /// served too. Links to targets outside `root` are followed.
     pub fn reloading(root: PathBuf) -> Self {
+        let files = index(&root, None);
+
         Self {
+            root,
+            files,
             reload: true,
-            ..Self::new(root)
         }
     }
 
@@ -190,19 +195,31 @@ fn hidden(name: &str, at_root: bool) -> bool {
 /// any link, so a directory that a link also reaches keeps its own name. The
 /// files of an alias are not in the index; a name with a dot is still served
 /// through it by the disk fallback. A directory that cannot be read adds
-/// nothing.
-fn index(root: &Path) -> HashSet<String> {
+/// nothing. With `confined`, a file or directory whose canonical path is not
+/// under it is skipped.
+fn index(root: &Path, confined: Option<&Path>) -> HashSet<String> {
     let mut files = HashSet::new();
     let mut walked = HashSet::new();
     let mut links = std::collections::VecDeque::new();
 
-    walk(root, "", &mut files, &mut walked, &mut links);
+    walk(root, "", confined, &mut files, &mut walked, &mut links);
 
     while let Some((directory, prefix)) = links.pop_front() {
-        walk(&directory, &prefix, &mut files, &mut walked, &mut links);
+        walk(
+            &directory,
+            &prefix,
+            confined,
+            &mut files,
+            &mut walked,
+            &mut links,
+        );
     }
 
     files
+}
+
+fn inside(confined: Option<&Path>, canonical: &Path) -> bool {
+    confined.is_none_or(|root| canonical.starts_with(root))
 }
 
 /// Walks the real directories under `directory`; the links to directories
@@ -210,6 +227,7 @@ fn index(root: &Path) -> HashSet<String> {
 fn walk(
     directory: &Path,
     prefix: &str,
+    confined: Option<&Path>,
     files: &mut HashSet<String>,
     walked: &mut HashSet<PathBuf>,
     links: &mut std::collections::VecDeque<(PathBuf, String)>,
@@ -218,7 +236,7 @@ fn walk(
         return;
     };
 
-    if !walked.insert(canonical.clone()) {
+    if !inside(confined, &canonical) || !walked.insert(canonical.clone()) {
         return;
     }
 
@@ -242,13 +260,30 @@ fn walk(
         };
         let path = format!("{prefix}{name}");
 
+        let link = entry.file_type().is_ok_and(|kind| kind.is_symlink());
+
         if metadata.is_file() {
+            let outside = link
+                && !std::fs::canonicalize(entry.path())
+                    .is_ok_and(|target| inside(confined, &target));
+
+            if outside {
+                continue;
+            }
+
             files.insert(path);
         } else if metadata.is_dir() {
-            if entry.file_type().is_ok_and(|kind| kind.is_symlink()) {
+            if link {
                 links.push_back((entry.path(), format!("{path}/")));
             } else {
-                walk(&entry.path(), &format!("{path}/"), files, walked, links);
+                walk(
+                    &entry.path(),
+                    &format!("{path}/"),
+                    confined,
+                    files,
+                    walked,
+                    links,
+                );
             }
         }
     }
@@ -433,23 +468,84 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn linked_directories_are_followed_once() {
+        let root = tempfile::tempdir().unwrap();
+
+        write(root.path(), "real/robots.txt", "robots");
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("static")).unwrap();
+
+        // A link back to the root: the index must end
+        std::os::unix::fs::symlink(root.path(), root.path().join("loop")).unwrap();
+
+        let assets = Assets::new(root.path().to_path_buf());
+
+        assert_eq!(assets.files.len(), 1);
+        assert_eq!(body(&assets, "/real/robots.txt").await.unwrap(), b"robots");
+    }
+
+    #[tokio::test]
+    async fn a_path_cannot_leave_the_root() {
+        let site = tempfile::tempdir().unwrap();
+        let root = site.path().join("client");
+
+        write(&root, "index.html", "home");
+        write(site.path(), "secret.txt", "secret");
+
+        let assets = Assets::new(root.clone());
+        let reloading = Assets::reloading(root);
+
+        for path in [
+            "/../secret.txt",
+            "/a/../../secret.txt",
+            "/%2e%2e/secret.txt",
+            "/..%2fsecret.txt",
+            "/..\\secret.txt",
+            "//secret.txt",
+        ] {
+            assert!(body(&assets, path).await.is_none(), "{path}");
+            assert!(body(&reloading, path).await.is_none(), "{path}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_out_of_the_root_is_served_only_when_reloading() {
         let site = tempfile::tempdir().unwrap();
         let root = site.path().join("client");
 
         write(site.path(), "static/robots.txt", "robots");
+        write(site.path(), "secret.txt", "secret");
         std::fs::create_dir_all(&root).unwrap();
         std::os::unix::fs::symlink(site.path().join("static"), root.join("static")).unwrap();
+        std::os::unix::fs::symlink(site.path().join("secret.txt"), root.join("secret.txt"))
+            .unwrap();
 
-        // A link back to the root: the index must end
-        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+        let assets = Assets::new(root.clone());
+        let reloading = Assets::reloading(root);
+
+        assert!(assets.files.is_empty());
+        assert!(body(&assets, "/static/robots.txt").await.is_none());
+        assert!(body(&assets, "/secret.txt").await.is_none());
+        assert_eq!(
+            body(&reloading, "/static/robots.txt").await.unwrap(),
+            b"robots"
+        );
+        assert_eq!(body(&reloading, "/secret.txt").await.unwrap(), b"secret");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_to_the_root_parent_indexes_nothing_outside() {
+        let site = tempfile::tempdir().unwrap();
+        let root = site.path().join("client");
+
+        write(&root, "index.html", "home");
+        write(site.path(), "other/data.json", "{}");
+        std::os::unix::fs::symlink(site.path(), root.join("up")).unwrap();
 
         let assets = Assets::new(root);
 
-        assert!(assets.files.contains("static/robots.txt"));
-        assert_eq!(
-            body(&assets, "/static/robots.txt").await.unwrap(),
-            b"robots"
-        );
+        assert_eq!(assets.files.len(), 1);
+        assert!(body(&assets, "/up/other/data.json").await.is_none());
     }
 
     #[cfg(unix)]
@@ -538,7 +634,8 @@ mod tests {
         write(root.path(), &format!("d{depth}/x.js"), "x");
 
         let start = std::time::Instant::now();
-        let assets = Assets::new(root.path().join("d0"));
+        // Reloading follows links out of the root, as this chain needs
+        let assets = Assets::reloading(root.path().join("d0"));
         let elapsed = start.elapsed();
 
         eprintln!("index of {depth} levels with 2 links each: {elapsed:?}");
