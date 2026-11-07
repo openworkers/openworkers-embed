@@ -2,22 +2,26 @@
 //! once, at start, as sirv does in production, so a page route such as `/`
 //! is answered from memory, with no system call.
 //!
-//! When the files change on disk after start:
+//! Only the files in the index are served. When the files change on disk
+//! after start:
 //! - A file that changes its content is served with the new content: the
 //!   content is read on each request.
-//! - A path whose last segment has a dot, such as `/_app/immutable/x.js`, is
-//!   looked for on disk when the index misses it. So the files a rebuild adds,
-//!   or a directory made after start, are served.
-//! - A prerendered page added after start (`/about` for `about.html`) is not
-//!   served until a restart: the request goes to the worker.
+//! - A file or a prerendered page added after start (`/about` for
+//!   `about.html`) is not served until a restart: the request goes to the
+//!   worker.
 //! - A file removed after start is not served: its read fails.
+//!
+//! [`Assets::reloading`] is for development. A path whose last segment has a
+//! dot, such as `/_app/immutable/x.js`, is also looked for on disk when the
+//! index misses it. So the files a rebuild adds, or a directory made after
+//! start, are served.
 //!
 //! A name that starts with a dot is never served, except `/.well-known/`.
 //!
 //! Known limits:
 //! - A directory that two links reach is indexed under the first one only.
-//!   Through the other, a name with a dot is served by the disk fallback, and
-//!   a prerendered page is not.
+//!   Through the other, nothing is served, unless the files are reloading
+//!   and the name has a dot.
 //! - Links are followed and not checked against the root: a link to `/`
 //!   indexes and serves that whole tree. Do not put such a link in the
 //!   assets directory.
@@ -25,10 +29,11 @@
 //!   link named `env.txt` to `.env` serves it. Only the owner of the
 //!   directory can make such a link.
 //! - On Windows, a short 8.3 name (`ENVLOC~1.LOC` for `.env.local`) can reach
-//!   a hidden file through the disk fallback.
+//!   a hidden file through the disk fallback of reloading files.
 //! - The index compares names with their case. On a file system
 //!   that ignores case, as macOS does by default, `/Favicon.png` does not find
-//!   `favicon.png`, unless the last segment has a dot and the disk finds it.
+//!   `favicon.png`, unless the files are reloading, the last segment has a
+//!   dot and the disk finds it.
 
 use bytes::Bytes;
 use openworkers_core::{HttpResponse, ResponseBody};
@@ -38,6 +43,7 @@ use std::path::{Component, Path, PathBuf};
 pub(crate) struct Assets {
     root: PathBuf,
     files: HashSet<String>,
+    reload: bool,
 }
 
 pub(crate) struct Asset {
@@ -66,7 +72,20 @@ impl Assets {
     pub fn new(root: PathBuf) -> Self {
         let files = index(&root);
 
-        Self { root, files }
+        Self {
+            root,
+            files,
+            reload: false,
+        }
+    }
+
+    /// Like [`new`](Self::new), and a file that a rebuild adds after start is
+    /// served too.
+    pub fn reloading(root: PathBuf) -> Self {
+        Self {
+            reload: true,
+            ..Self::new(root)
+        }
     }
 
     /// The file for a URL path: the exact file, then a prerendered page
@@ -85,10 +104,11 @@ impl Assets {
         };
 
         // A last segment with a dot names a file, which a rebuild may have added
-        let file = path
-            .rsplit('/')
-            .next()
-            .is_some_and(|last| last.contains('.'));
+        let file = self.reload
+            && path
+                .rsplit('/')
+                .next()
+                .is_some_and(|last| last.contains('.'));
 
         for candidate in candidates {
             if !self.files.contains(&candidate) && !(file && candidate == path) {
@@ -301,7 +321,7 @@ mod tests {
         write(root.path(), ".well-known/.x", "secret");
         write(root.path(), "a/.well-known/x", "secret");
 
-        let assets = Assets::new(root.path().to_path_buf());
+        let assets = Assets::reloading(root.path().to_path_buf());
 
         // Made after start, with a dot in the last segment: the disk is not read
         write(root.path(), ".env", "secret");
@@ -356,12 +376,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_file_added_after_start_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+
+        write(root.path(), "index.html", "home");
+
+        let assets = Assets::new(root.path().to_path_buf());
+
+        write(root.path(), "_app/immutable/chunks/new.js", "chunk");
+
+        assert!(
+            body(&assets, "/_app/immutable/chunks/new.js")
+                .await
+                .is_none()
+        );
+        assert_eq!(body(&assets, "/").await.unwrap(), b"home");
+    }
+
+    #[tokio::test]
     async fn a_rebuild_serves_its_new_files() {
         let root = tempfile::tempdir().unwrap();
 
         write(root.path(), "index.html", "v1");
 
-        let assets = Assets::new(root.path().to_path_buf());
+        let assets = Assets::reloading(root.path().to_path_buf());
 
         // vite build writes new hashed chunks next to a new index.html
         write(root.path(), "index.html", "v2");
@@ -385,7 +423,7 @@ mod tests {
     async fn a_root_made_after_start_serves_its_files() {
         let site = tempfile::tempdir().unwrap();
         let root = site.path().join("assets");
-        let assets = Assets::new(root.clone());
+        let assets = Assets::reloading(root.clone());
 
         write(&root, "_app/immutable/a.js", "a");
 
@@ -416,18 +454,20 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn an_alias_of_a_directory_serves_its_files_from_disk() {
+    async fn an_alias_of_a_directory_is_served_from_disk_only_when_reloading() {
         let root = tempfile::tempdir().unwrap();
 
         write(root.path(), "a/x.js", "x");
         std::os::unix::fs::symlink(root.path().join("a"), root.path().join("b")).unwrap();
 
         let assets = Assets::new(root.path().to_path_buf());
+        let reloading = Assets::reloading(root.path().to_path_buf());
 
-        // One of the two is in the index; both serve x.js
+        // One of the two is in the index
         assert_eq!(assets.files.len(), 1);
         assert_eq!(body(&assets, "/a/x.js").await.unwrap(), b"x");
-        assert_eq!(body(&assets, "/b/x.js").await.unwrap(), b"x");
+        assert!(body(&assets, "/b/x.js").await.is_none());
+        assert_eq!(body(&reloading, "/b/x.js").await.unwrap(), b"x");
     }
 
     // A link to .well-known at the root: the real directory keeps its name

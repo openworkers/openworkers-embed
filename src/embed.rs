@@ -24,9 +24,16 @@ pub struct EmbedBuilder {
 impl EmbedBuilder {
     /// Serve the files of a directory (the adapter's `build/assets`) for GET
     /// and HEAD requests, before the worker runs. The worker also reaches them
-    /// as `env.ASSETS`.
+    /// as `env.ASSETS`. Only the files found at start are served.
     pub fn assets(mut self, directory: impl Into<PathBuf>) -> Self {
         self.assets = Some(Arc::new(Assets::new(directory.into())));
+        self
+    }
+
+    /// Like [`assets`](Self::assets), and the files that a rebuild adds after
+    /// start are served too. For development.
+    pub fn assets_reloading(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.assets = Some(Arc::new(Assets::reloading(directory.into())));
         self
     }
 
