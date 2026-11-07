@@ -190,9 +190,11 @@ pub(crate) fn on_park() {
 #[allow(clippy::arc_with_non_send_sync)]
 fn build(bundle: &Bundle, ops: OperationsHandle) -> Result<Place, TerminationReason> {
     // The code is trusted: a stream may live as long as its client reads it
+    let defaults = RuntimeLimits::default();
     let limits = RuntimeLimits {
+        max_cpu_time_ms: bundle.cpu_limit_ms().unwrap_or(defaults.max_cpu_time_ms),
         max_wall_clock_time_ms: 0,
-        ..RuntimeLimits::default()
+        ..defaults
     };
     let isolate = Arc::new(LockerManagedIsolate::new(limits.clone()));
     let context = {
@@ -258,6 +260,7 @@ pub(crate) async fn fetch(
     request: HttpRequest,
     gone: Gone,
 ) -> Result<HttpResponse, EmbedError> {
+    let path = crate::url::path(&request.url).to_string();
     let (task, response) = Event::fetch(request);
     let permit = PERMITS
         .with(Arc::clone)
@@ -269,7 +272,7 @@ pub(crate) async fn fetch(
         return Err(EmbedError::Worker(TerminationReason::Aborted));
     }
 
-    respond(
+    let result = respond(
         async move {
             let Some(running) = admit(&gone).await else {
                 return Err(TerminationReason::Aborted);
@@ -288,7 +291,13 @@ pub(crate) async fn fetch(
         },
         response,
     )
-    .await
+    .await;
+
+    if let Err(EmbedError::Worker(TerminationReason::CpuTimeLimit)) = &result {
+        eprintln!("openworkers-embed: CPU time limit exceeded for {path}");
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -585,5 +594,33 @@ mod tests {
 
         eprintln!("8 requests of 200 ms on one thread: {elapsed:?}");
         assert!(elapsed < Duration::from_millis(800), "{elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn the_cpu_limit_of_a_request_is_set_by_the_builder() {
+        let worker = "export default {
+            fetch() {
+                const end = Date.now() + 150;
+
+                while (Date.now() < end) {}
+
+                return new Response('ok');
+            },
+        };";
+        let default = Embed::builder(worker).threads(1).build().unwrap();
+        let raised = Embed::builder(worker)
+            .threads(1)
+            .cpu_limit(2000)
+            .build()
+            .unwrap();
+        let off = Embed::builder(worker)
+            .threads(1)
+            .cpu_limit(0)
+            .build()
+            .unwrap();
+
+        assert!(default.fetch(get()).await.is_err());
+        assert!(raised.fetch(get()).await.is_ok());
+        assert!(off.fetch(get()).await.is_ok());
     }
 }

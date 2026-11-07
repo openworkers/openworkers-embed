@@ -12,6 +12,8 @@ const DEFAULT_EXPORT_BRIDGE: &str = include_str!("default_export_bridge.js");
 #[derive(Clone)]
 pub(crate) struct Bundle {
     script: Script,
+    #[cfg_attr(not(feature = "v8"), allow(dead_code))]
+    cpu_limit_ms: Option<u64>,
 }
 
 impl Bundle {
@@ -29,7 +31,20 @@ impl Bundle {
 
         Ok(Self {
             script: Script::with_bindings(code, Some(vars), bindings),
+            cpu_limit_ms: None,
         })
+    }
+
+    pub fn with_cpu_limit(self, cpu_limit_ms: Option<u64>) -> Self {
+        Self {
+            cpu_limit_ms,
+            ..self
+        }
+    }
+
+    #[cfg(feature = "v8")]
+    pub fn cpu_limit_ms(&self) -> Option<u64> {
+        self.cpu_limit_ms
     }
 
     pub fn script(&self) -> Script {

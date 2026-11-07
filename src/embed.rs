@@ -21,6 +21,7 @@ pub struct EmbedBuilder {
     fetch: bool,
     vars: HashMap<String, String>,
     threads: usize,
+    cpu_limit_ms: Option<u64>,
 }
 
 impl EmbedBuilder {
@@ -105,6 +106,16 @@ impl EmbedBuilder {
         self
     }
 
+    /// The CPU time one request may use, in milliseconds: 50 by default, 0 turns
+    /// the limit off. The time of every turn of the request counts, from one
+    /// budget: the JavaScript, the commands that do not wait, and the first
+    /// compile of the worker code in a place that has not run it yet. Waiting
+    /// does not count. Only the v8 engine applies it.
+    pub fn cpu_limit(mut self, milliseconds: u64) -> Self {
+        self.cpu_limit_ms = Some(milliseconds);
+        self
+    }
+
     pub fn build(self) -> Result<Embed, EmbedError> {
         let host = Host {
             commands: self.commands,
@@ -118,7 +129,8 @@ impl EmbedBuilder {
         }
 
         Ok(Embed {
-            bundle: Bundle::compile(&self.code, self.vars, host.bindings())?,
+            bundle: Bundle::compile(&self.code, self.vars, host.bindings())?
+                .with_cpu_limit(self.cpu_limit_ms),
             host: Arc::new(host),
             pool: WorkerPool::start(self.threads)?,
         })
@@ -168,6 +180,7 @@ impl Embed {
             fetch: true,
             vars: HashMap::new(),
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            cpu_limit_ms: None,
         }
     }
 
