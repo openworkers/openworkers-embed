@@ -1,6 +1,6 @@
 [package]
 name = "openworkers-embed"
-version = "0.18.3"
+version = "0.18.4"
 edition = "2024"
 license = "MIT"
 description = "Run a SvelteKit worker inside a Rust backend, with Rust functions the worker calls"
